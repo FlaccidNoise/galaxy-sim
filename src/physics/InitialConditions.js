@@ -28,7 +28,7 @@ export function galaxyDisk(params) {
     const base = i * STRIDE;
     const isBulge = i <= nBulge;
 
-    let r, theta;
+    let r, theta, armIndex, armOffset, r0Spiral, thetaArm;
 
     if (isBulge) {
       // Tight Gaussian bulge
@@ -41,12 +41,12 @@ export function galaxyDisk(params) {
       r = -r0 * Math.log(1.0 - u * (1.0 - Math.exp(-diskRadius / r0)));
 
       // Assign to an arm
-      const armIndex  = (i - nBulge - 1) % armCount;
-      const armOffset = armIndex * (2 * Math.PI / armCount);
+      armIndex  = (i - nBulge - 1) % armCount;
+      armOffset = armIndex * (2 * Math.PI / armCount);
 
       // Logarithmic spiral centerline angle at radius r
-      const r0Spiral  = diskRadius * 0.1;
-      const thetaArm  = Math.log(Math.max(r, r0Spiral) / r0Spiral) / armTightness + armOffset;
+      r0Spiral  = diskRadius * 0.1;
+      thetaArm  = Math.log(Math.max(r, r0Spiral) / r0Spiral) / armTightness + armOffset;
 
       // Scatter around arm — wider at larger radii
       const scatter = 0.15 + (r / diskRadius) * 0.40;
@@ -64,11 +64,8 @@ export function galaxyDisk(params) {
       mass = 0.2 + Math.pow(Math.random(), 2.0) * 1.0;
     } else {
       // Check angular distance from arm centerline
-      const armIndex  = (i - nBulge - 1) % armCount;
-      const armOffset = armIndex * (2 * Math.PI / armCount);
-      const r0Spiral  = diskRadius * 0.1;
-      const thetaArm  = Math.log(Math.max(r, r0Spiral) / r0Spiral) / armTightness + armOffset;
-      const dTheta    = Math.abs(((theta - thetaArm) % (2 * Math.PI) + Math.PI) % (2 * Math.PI) - Math.PI);
+      const diff = Math.abs(theta - thetaArm);
+      const dTheta = Math.min(diff, 2 * Math.PI - diff);
 
       if (dTheta < 0.4) {
         // In arm: upper IMF — young hot stars, 1 – 20 M☉
