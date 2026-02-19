@@ -1,0 +1,69 @@
+import * as THREE from 'three';
+import WebGPURenderer from 'three/addons/renderers/webgpu/WebGPURenderer.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+export class Renderer {
+  constructor() {
+    this.scene = new THREE.Scene();
+    this.camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 10000);
+    this.camera.position.set(0, 60, 120);
+    this.camera.lookAt(0, 0, 0);
+  }
+
+  async init() {
+    this.renderer = new WebGPURenderer({ antialias: false });
+    this.renderer.setSize(innerWidth, innerHeight);
+    this.renderer.setPixelRatio(devicePixelRatio);
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.2;
+    document.body.appendChild(this.renderer.domElement);
+
+    await this.renderer.init();
+
+    // OrbitControls
+    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+    this.controls.enableDamping = true;
+    this.controls.dampingFactor = 0.05;
+
+    // Bloom postprocessing
+    this.composer = new EffectComposer(this.renderer);
+    this.composer.addPass(new RenderPass(this.scene, this.camera));
+    this.bloomPass = new UnrealBloomPass(
+      new THREE.Vector2(innerWidth, innerHeight),
+      1.5,  // strength
+      0.4,  // radius
+      0.1   // threshold
+    );
+    this.composer.addPass(this.bloomPass);
+    this.composer.addPass(new OutputPass());
+
+    // Resize handler
+    window.addEventListener('resize', () => {
+      this.camera.aspect = innerWidth / innerHeight;
+      this.camera.updateProjectionMatrix();
+      this.renderer.setSize(innerWidth, innerHeight);
+      this.composer.setSize(innerWidth, innerHeight);
+    });
+
+    // Expose underlying WebGPU device for physics
+    this.device = this.renderer.backend.device;
+    console.log('WebGPU device acquired:', this.device);
+
+    return this;
+  }
+
+  render() {
+    this.controls.update();
+    this.composer.render();
+  }
+
+  setBloom(strength, radius, threshold) {
+    this.bloomPass.strength = strength;
+    this.bloomPass.radius = radius;
+    this.bloomPass.threshold = threshold;
+  }
+}
