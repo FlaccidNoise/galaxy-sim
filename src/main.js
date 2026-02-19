@@ -5,6 +5,7 @@ import { galaxyDisk, uniformSphere, twoGalaxyCollision } from './physics/Initial
 import { Controls } from './ui/Controls.js';
 
 let renderer, particles, sim, controls, gpuDevice;
+let readbackInProgress = false;
 
 // FPS counter elements
 let frameCount = 0, lastFPSTime = performance.now();
@@ -88,11 +89,12 @@ async function loop() {
     const enc = gpuDevice.createCommandEncoder();
     sim.step(enc);
 
-    if (i === stepsPerFrame - 1) {
+    if (i === stepsPerFrame - 1 && !readbackInProgress) {
       // Last step: queue readback in same encoder, submit, then update geometry
       particles.queueReadback(enc, sim.positionBuffer);
       gpuDevice.queue.submit([enc.finish()]);
-      await particles.updateFromStaging(s.colorMode, 50.0);
+      readbackInProgress = true;
+      particles.updateFromStaging(s.colorMode, 50.0).then(() => { readbackInProgress = false; });
     } else {
       gpuDevice.queue.submit([enc.finish()]);
     }
