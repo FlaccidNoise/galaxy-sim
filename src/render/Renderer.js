@@ -53,6 +53,18 @@ export class Renderer {
     this.device = this.renderer.backend.device;
     console.log('WebGPU device acquired:', this.device);
 
+    // Background starfield for depth
+    const bgGeo = new THREE.BufferGeometry();
+    const bgPositions = new Float32Array(2000 * 3);
+    for (let i = 0; i < 2000; i++) {
+      bgPositions[i * 3]     = (Math.random() - 0.5) * 2000;
+      bgPositions[i * 3 + 1] = (Math.random() - 0.5) * 2000;
+      bgPositions[i * 3 + 2] = (Math.random() - 0.5) * 2000;
+    }
+    bgGeo.setAttribute('position', new THREE.BufferAttribute(bgPositions, 3));
+    const bgMat = new THREE.PointsMaterial({ size: 0.5, color: 0x334455, sizeAttenuation: true });
+    this.scene.add(new THREE.Points(bgGeo, bgMat));
+
     return this;
   }
 

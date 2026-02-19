@@ -104,12 +104,12 @@ const defaultState = {
   preset: 'Galaxy Disk',
   N: 10000,
   diskRadius: 50,
-  diskHeight: 2,
-  centralMass: 1000,
-  velDispersion: 0.5,
+  diskHeight: 3,
+  centralMass: 2000,
+  velDispersion: 0.3,
   G: 1.0,
-  epsilon: 1.0,
-  dt: 0.02,
+  epsilon: 2.0,
+  dt: 0.01,
 };
 
 await init(defaultState);
