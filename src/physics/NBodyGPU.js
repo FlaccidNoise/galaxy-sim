@@ -35,30 +35,39 @@ export class NBodyGPU {
     device.queue.writeBuffer(this.buffers[0], 0, particleData);
     device.queue.writeBuffer(this.buffers[1], 0, particleData);
 
-    // Uniform buffer for simulation params
+    // Params uniform: [dt, G, epsilon², N, theta, pad, pad, pad] — 32 bytes
     this.paramsBuffer = device.createBuffer({
-      size: 16, // [dt: f32, G: f32, epsilon2: f32, N: u32] — 16 bytes total
+      size: 32,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
-    // Load WGSL shader
-    const wgslResp = await fetch('./src/physics/shaders/nbody.wgsl');
-    const wgslCode = await wgslResp.text();
-    const shaderModule = device.createShaderModule({ code: wgslCode });
+    // BH tree buffer: preallocated for up to N*2+1000 nodes (64 bytes each).
+    // Contents are written each frame via uploadBHTree().
+    this.maxBHNodes = this.N * 2 + 1000;
+    this.bhBuffer = device.createBuffer({
+      size: this.maxBHNodes * 64,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
 
-    // Bind group layout
+    // Load BH shader
+    const resp = await fetch('./src/physics/shaders/nbody_bh.wgsl');
+    const code = await resp.text();
+    const shader = device.createShaderModule({ code });
+
+    // Bind group layout: particlesIn, particlesOut, params, bhNodes
     this.bindGroupLayout = device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
         { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
         { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+        { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
       ],
     });
 
     // Compute pipeline
     this.pipeline = device.createComputePipeline({
       layout: device.createPipelineLayout({ bindGroupLayouts: [this.bindGroupLayout] }),
-      compute: { module: shaderModule, entryPoint: 'main' },
+      compute: { module: shader, entryPoint: 'main' },
     });
 
     // Two bind groups (one per ping-pong direction: A→B and B→A)
@@ -77,6 +86,7 @@ export class NBodyGPU {
         { binding: 0, resource: { buffer: this.buffers[inIdx] } },
         { binding: 1, resource: { buffer: this.buffers[outIdx] } },
         { binding: 2, resource: { buffer: this.paramsBuffer } },
+        { binding: 3, resource: { buffer: this.bhBuffer } },
       ],
     });
   }
@@ -88,15 +98,30 @@ export class NBodyGPU {
     this.device.queue.writeBuffer(this.buffers[1], 12, buf);
   }
 
-  updateParams(dt, G, epsilon, N) {
-    // Pack as [dt, G, epsilon², N_as_u32_reinterpreted]
-    const arr = new Float32Array(4);
+  updateParams(dt, G, epsilon, N, theta = 0.5) {
+    // Pack as [dt, G, epsilon², N_as_u32, theta, pad, pad, pad]
+    const arr = new Float32Array(8);
     arr[0] = dt;
     arr[1] = G;
     arr[2] = epsilon * epsilon;
-    // Write N as u32 into the 4th slot (same bytes, different type view)
     new Uint32Array(arr.buffer)[3] = N;
+    arr[4] = theta;
     this.device.queue.writeBuffer(this.paramsBuffer, 0, arr.buffer);
+  }
+
+  /**
+   * Upload a freshly-built BHTree to the GPU buffer.
+   * Must be called before the next sim.step() to take effect.
+   */
+  uploadBHTree(bhTree) {
+    if (!this.ready) return;
+    const bytes = bhTree.byteLength;
+    if (bytes > this.maxBHNodes * 64) {
+      console.warn(`BHTree: ${bhTree.numNodes} nodes exceeds preallocated max ${this.maxBHNodes}; tree truncated`);
+      return;
+    }
+    // Write only the used portion — avoids uploading the entire preallocated buffer.
+    this.device.queue.writeBuffer(this.bhBuffer, 0, bhTree.f32.buffer, 0, bytes);
   }
 
   step(commandEncoder) {

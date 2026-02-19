@@ -3,8 +3,10 @@ import { ParticleSystem } from './render/ParticleSystem.js';
 import { NBodyGPU, requestGPUDevice } from './physics/NBodyGPU.js';
 import { galaxyDisk, uniformSphere, twoGalaxyCollision } from './physics/InitialConditions.js';
 import { Controls } from './ui/Controls.js';
+import { BHTree } from './physics/BHTree.js';
 
 let renderer, particles, sim, controls, gpuDevice;
+let bhTree = null;
 let readbackInProgress = false;
 let stepAccumulator = 0;
 
@@ -58,6 +60,17 @@ async function init(params) {
   particles = new ParticleSystem(renderer.scene, N);
   particles.initStaging(gpuDevice, particleData.byteLength);
 
+  // Build initial BH tree from IC data so frame 0 has valid physics.
+  bhTree = new BHTree(N * 2 + 1000);
+  const initPos = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    initPos[i*3]   = particleData[i*8];
+    initPos[i*3+1] = particleData[i*8+1];
+    initPos[i*3+2] = particleData[i*8+2];
+  }
+  bhTree.build(initPos, N);
+  sim.uploadBHTree(bhTree);
+
   // Init controls on first call only
   if (!controls) {
     controls = new Controls(sim, particles, renderer);
@@ -95,7 +108,7 @@ async function loop() {
   }
 
   for (let i = 0; i < stepsThisFrame; i++) {
-    sim.updateParams(s.dt, s.G, s.epsilon, sim.N);
+    sim.updateParams(s.dt, s.G, s.epsilon, sim.N, s.theta);
 
     const enc = gpuDevice.createCommandEncoder();
     sim.step(enc);
@@ -105,7 +118,14 @@ async function loop() {
       particles.queueReadback(enc, sim.positionBuffer);
       gpuDevice.queue.submit([enc.finish()]);
       readbackInProgress = true;
-      particles.updateFromStaging(s.colorMode, 50.0).then(() => { readbackInProgress = false; });
+      particles.updateFromStaging(s.colorMode, 50.0).then(() => {
+        readbackInProgress = false;
+        // Rebuild BH tree from latest positions (1-frame lag; imperceptible visually).
+        if (bhTree) {
+          bhTree.build(particles.positions, particles.N);
+          sim.uploadBHTree(bhTree);
+        }
+      });
     } else {
       gpuDevice.queue.submit([enc.finish()]);
     }

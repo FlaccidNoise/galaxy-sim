@@ -24,6 +24,7 @@ export class Controls {
       G: 1.0,
       epsilon: 1.5,
       dt: 0.01,
+      theta: 0.5,
       // Display
       colorMode: 'Spectral',
       bloomStrength: 0.55,
@@ -63,6 +64,7 @@ export class Controls {
     physFolder.add(this.state, 'G', 0.1, 10).name('G');
     physFolder.add(this.state, 'epsilon', 0.1, 10).name('Softening ε');
     physFolder.add(this.state, 'dt', 0.001, 0.1).name('Timestep dt');
+    physFolder.add(this.state, 'theta', 0.1, 1.0, 0.05).name('BH Theta θ');
 
     // Display folder
     const dispFolder = gui.addFolder('Display');
