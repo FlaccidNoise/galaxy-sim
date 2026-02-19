@@ -11,22 +11,22 @@ export class Controls {
     this.state = {
       // Simulation
       paused: false,
-      speed: 0.05,
+      speed: 0.03,
       // Initial conditions
       preset: 'Galaxy Disk',
-      N: 10000,
+      N: 25000,
       diskRadius: 50.0,
       diskHeight: 2.0,
-      centralMass: 1000.0,
-      velDispersion: 0.5,
+      centralMass: 10000.0,
+      velDispersion: 0.2,
       armCount: 2,
       // Physics
       G: 1.0,
-      epsilon: 1.0,
-      dt: 0.02,
+      epsilon: 1.5,
+      dt: 0.01,
       // Display
       colorMode: 'Spectral',
-      bloomStrength: 1.5,
+      bloomStrength: 0.55,
     };
 
     this._build();
@@ -51,7 +51,7 @@ export class Controls {
       .onChange(() => this._scheduleRestart());
     icFolder.add(this.state, 'diskHeight', 0.5, 20).name('Disk Height')
       .onChange(() => this._scheduleRestart());
-    icFolder.add(this.state, 'centralMass', 0, 5000).name('Central Mass')
+    icFolder.add(this.state, 'centralMass', 0, 50000).name('Central Mass')
       .onChange(v => this.sim.updateCentralMass(v));
     icFolder.add(this.state, 'velDispersion', 0, 5).name('Vel Dispersion')
       .onChange(() => this._scheduleRestart());
@@ -68,7 +68,7 @@ export class Controls {
     const dispFolder = gui.addFolder('Display');
     dispFolder.add(this.state, 'colorMode', ['Spectral', 'Velocity', 'Mass']).name('Color Mode');
     dispFolder.add(this.state, 'bloomStrength', 0, 3).name('Bloom').onChange(v => {
-      this.renderer.setBloom(v, 0.4, 0.1);
+      this.renderer.setBloom(v, 0.4, 0.6);
     });
   }
 

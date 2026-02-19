@@ -44,5 +44,6 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     let newVel = pi.vel + acc * params.dt;
     let newPos = pi.pos + newVel * params.dt;
 
-    particlesOut[i] = Particle(newPos, pi.mass, newVel, 0.0);
+    // Preserve pi.pad — it stores the per-star spectral color mass for rendering.
+    particlesOut[i] = Particle(newPos, pi.mass, newVel, pi.pad);
 }

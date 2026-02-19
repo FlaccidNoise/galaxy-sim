@@ -9,7 +9,7 @@ export class Renderer {
   constructor() {
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 10000);
-    this.camera.position.set(0, 60, 120);
+    this.camera.position.set(0, 15, 115);
     this.camera.lookAt(0, 0, 0);
   }
 
@@ -17,8 +17,13 @@ export class Renderer {
     this.renderer = new THREE.WebGLRenderer({ antialias: false });
     this.renderer.setSize(innerWidth, innerHeight);
     this.renderer.setPixelRatio(devicePixelRatio);
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.2;
+    // ReinhardToneMapping (x/(1+x) per-channel) provides the highlight compression we need:
+    // - Dense arm clusters (3+ B stars): pre-Reinhard (1.26,1.58,2.10) → (0.56,0.61,0.68) = blue ✓
+    // - Isolated K star: pre-Reinhard (0.42,0.27,0.12) → (0.30,0.21,0.11) = orange ✓
+    // - Even 10-star clusters stay distinctly blue rather than white-saturating.
+    // Linear tone mapping couldn't compress highlights; exposure boost made clusters white.
+    this.renderer.toneMapping = THREE.ReinhardToneMapping;
+    this.renderer.toneMappingExposure = 2.3;
     document.body.appendChild(this.renderer.domElement);
 
     // OrbitControls
@@ -31,9 +36,9 @@ export class Renderer {
     this.composer.addPass(new RenderPass(this.scene, this.camera));
     this.bloomPass = new UnrealBloomPass(
       new THREE.Vector2(innerWidth, innerHeight),
-      1.5,  // strength
-      0.4,  // radius
-      0.1   // threshold
+      0.55, // strength — enough to make arms visibly luminous
+      0.3,  // radius — tight halos so individual stars bloom separately
+      0.40  // threshold — lower so individual bright OB stars bloom
     );
     this.composer.addPass(this.bloomPass);
     this.composer.addPass(new OutputPass());

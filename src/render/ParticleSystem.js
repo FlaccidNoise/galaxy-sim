@@ -62,25 +62,32 @@ export class ParticleSystem {
       this.positions[dst + 1] = raw[src + 1];
       this.positions[dst + 2] = raw[src + 2];
 
-      const mass  = raw[src + 3];
+      // mass (slot 3) is the dynamical mass (1.0 for all stars).
+      // colorMass (slot 7, the 'pad' field) is the spectral classification mass.
+      const mass      = raw[src + 3];
+      const colorMass = raw[src + 7] > 0 ? raw[src + 7] : mass;
       const vx = raw[src + 4], vy = raw[src + 5], vz = raw[src + 6];
       const speed = Math.sqrt(vx*vx + vy*vy + vz*vz);
 
       if (colorMode === 'Spectral') {
-        spectralColor(mass, this.colors, dst);
+        spectralColor(colorMass, this.colors, dst);
       } else if (colorMode === 'Velocity') {
         velocityColor(speed, speedScale, this.colors, dst);
       } else {
-        massColor(mass, this.colors, dst);
+        massColor(colorMass, this.colors, dst);
       }
 
-      // Size from luminosity: L ∝ M^3.5, log-scaled to pixel range
+      // Size from luminosity: L ∝ M^3.5 using colorMass for visual classification.
+      // Min 2.5 ensures K/M stars render as ~2px glows so their orange color is visible.
+      // At camera depth ~200, gl_PointSize = size * 150/200. So size=2.5 → ~1.9px glow.
       if (i === 0) {
-        // Central black hole / core — fixed large bright size
-        this.sizes[i] = 16.0;
+        this.sizes[i] = 8.0;
       } else {
-        const L = Math.pow(Math.max(mass, 0.1), 3.5);
-        this.sizes[i] = Math.min(Math.max(Math.log(L + 1.0) * 2.0 + 1.0, 1.0), 12.0);
+        // Wider size spread so OB stars pop as individual blue jewels against the warm disk.
+        // OB (>2 M☉) → 4.5–4.8px, A/F → 2.7–3.3px, G/K → 1.6–2.0px, M → 1.5px.
+        // At camera depth ~140, gl_PointSize ≈ size * 1.07, so OB ≈ 5px screen.
+        const L = Math.pow(Math.max(colorMass, 0.1), 3.5);
+        this.sizes[i] = Math.min(Math.max(Math.log(L + 1.0) * 1.0 + 1.5, 2.0), 4.8);
       }
     }
 
@@ -94,17 +101,22 @@ export class ParticleSystem {
 
 /**
  * Map stellar mass (M☉) to spectral type color.
- * O: >16  blue-white   B: 2-16  blue      A: 1.4-2  white-blue
- * F: 1.04-1.4  white   G: 0.8-1.04  yellow  K: 0.45-0.8  orange  M: <0.45  red-orange
+ * Colors are intentionally saturated for visibility at small angular sizes —
+ * a real star's spectral color isn't perfectly pure, but for a sim you need
+ * the contrast to read clearly at 2-5 pixel scale.
+ *
+ * O: >16  vivid blue    B: 2-16  blue         A: 1.4-2  blue-white
+ * F: 1.04-1.4  white    G: 0.8-1.04  yellow-white
+ * K: 0.45-0.8  orange   M: <0.45  deep orange-red
  */
 function spectralColor(mass, out, i) {
-  if (mass > 16)        { out[i]=0.61; out[i+1]=0.69; out[i+2]=1.00; } // O
-  else if (mass > 2)    { out[i]=0.67; out[i+1]=0.75; out[i+2]=1.00; } // B
-  else if (mass > 1.4)  { out[i]=0.79; out[i+1]=0.85; out[i+2]=1.00; } // A
-  else if (mass > 1.04) { out[i]=0.97; out[i+1]=0.97; out[i+2]=1.00; } // F
-  else if (mass > 0.8)  { out[i]=1.00; out[i+1]=0.96; out[i+2]=0.92; } // G
-  else if (mass > 0.45) { out[i]=1.00; out[i+1]=0.82; out[i+2]=0.63; } // K
-  else                  { out[i]=1.00; out[i+1]=0.80; out[i+2]=0.44; } // M
+  if (mass > 16)        { out[i]=0.35; out[i+1]=0.55; out[i+2]=1.00; } // O  deep blue
+  else if (mass > 2)    { out[i]=0.48; out[i+1]=0.65; out[i+2]=1.00; } // B  vivid blue
+  else if (mass > 1.4)  { out[i]=0.78; out[i+1]=0.87; out[i+2]=1.00; } // A  blue-white
+  else if (mass > 1.04) { out[i]=1.00; out[i+1]=1.00; out[i+2]=0.95; } // F  near-white
+  else if (mass > 0.8)  { out[i]=1.00; out[i+1]=0.95; out[i+2]=0.75; } // G  yellow-white
+  else if (mass > 0.45) { out[i]=1.00; out[i+1]=0.65; out[i+2]=0.30; } // K  orange
+  else                  { out[i]=1.00; out[i+1]=0.45; out[i+2]=0.15; } // M  deep orange-red
 }
 
 function velocityColor(speed, scale, out, i) {

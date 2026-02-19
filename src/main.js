@@ -114,17 +114,17 @@ async function loop() {
   renderer.render();
 }
 
-// Bootstrap
+// Bootstrap — N/velDispersion must match Controls.js defaults exactly
 const defaultState = {
   preset: 'Galaxy Disk',
-  N: 10000,
+  N: 25000,
   diskRadius: 50,
-  diskHeight: 3,
-  centralMass: 2000,
-  velDispersion: 0.3,
+  diskHeight: 2,
+  centralMass: 10000,
+  velDispersion: 0.2,
   armCount: 2,
   G: 1.0,
-  epsilon: 2.0,
+  epsilon: 1.5,
   dt: 0.01,
 };
 
