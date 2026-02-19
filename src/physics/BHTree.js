@@ -38,8 +38,9 @@ export class BHTree {
    * Build the octree from a stride-3 positions array (x,y,z per particle).
    * @param {Float32Array} positions
    * @param {number}       N
+   * @param {number}       centralMass  Mass of particle 0 (default 1.0; all others = 1.0)
    */
-  build(positions, N) {
+  build(positions, N, centralMass = 1.0) {
     this.numNodes = 0;
     const f = this.f32, i32 = this.i32;
 
@@ -66,46 +67,49 @@ export class BHTree {
 
     // ── insert all particles ──────────────────────────────────────────
     for (let p = 0; p < N; p++) {
-      this._insert(0, positions[p*3], positions[p*3+1], positions[p*3+2], 0);
+      const m = (p === 0) ? centralMass : 1.0;
+      this._insert(0, positions[p*3], positions[p*3+1], positions[p*3+2], m, 0);
     }
   }
 
-  _insert(idx, px, py, pz, depth) {
+  _insert(idx, px, py, pz, mass, depth) {
     // Safety valve: coincident particles would recurse forever.
     if (depth > 60) return;
 
     const f = this.f32, i32 = this.i32;
     const b = idx * WORDS;
     const oldMass = f[b+3];
-    const newMass = oldMass + 1.0;
+    const newMass = oldMass + mass;
 
     if (oldMass === 0.0) {
       // Empty leaf — place particle directly.
-      f[b]=px; f[b+1]=py; f[b+2]=pz; f[b+3]=1.0;
+      f[b]=px; f[b+1]=py; f[b+2]=pz; f[b+3]=mass;
       f[b+5] = 1.0;  // isLeaf
       return;
     }
 
-    // Save old COM *before* updating (for leaves, old COM == stored particle pos).
+    // Save old COM *before* updating (for leaves, old COM == stored particle pos,
+    // and old mass == that particle's mass — used when re-inserting after subdivision).
     const oldCX = f[b], oldCY = f[b+1], oldCZ = f[b+2];
 
-    // Update COM and mass incrementally.
-    f[b]   = (oldCX * oldMass + px) / newMass;
-    f[b+1] = (oldCY * oldMass + py) / newMass;
-    f[b+2] = (oldCZ * oldMass + pz) / newMass;
+    // Update COM and mass incrementally (mass-weighted).
+    f[b]   = (oldCX * oldMass + px * mass) / newMass;
+    f[b+1] = (oldCY * oldMass + py * mass) / newMass;
+    f[b+2] = (oldCZ * oldMass + pz * mass) / newMass;
     f[b+3] = newMass;
 
     if (f[b+5] > 0.5) {
       // Was a single-particle leaf — convert to internal and re-insert old particle.
+      // oldMass here equals exactly the old particle's mass (leaf invariant).
       f[b+5] = 0.0;
-      this._insertIntoChild(idx, oldCX, oldCY, oldCZ, depth);
+      this._insertIntoChild(idx, oldCX, oldCY, oldCZ, oldMass, depth);
     }
 
     // Insert new particle into appropriate child.
-    this._insertIntoChild(idx, px, py, pz, depth);
+    this._insertIntoChild(idx, px, py, pz, mass, depth);
   }
 
-  _insertIntoChild(parentIdx, px, py, pz, depth) {
+  _insertIntoChild(parentIdx, px, py, pz, mass, depth) {
     const f = this.f32, i32 = this.i32;
     const pb  = parentIdx * WORDS;
     const cx  = this._scx[parentIdx];
@@ -133,7 +137,7 @@ export class BHTree {
       this._scz[childIdx] = cz + ((oct & 4) ? q : -q);
     }
 
-    this._insert(childIdx, px, py, pz, depth + 1);
+    this._insert(childIdx, px, py, pz, mass, depth + 1);
   }
 
   /** Byte length of the valid portion of the buffer (0..numNodes-1). */

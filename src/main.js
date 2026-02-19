@@ -68,7 +68,7 @@ async function init(params) {
     initPos[i*3+1] = particleData[i*8+1];
     initPos[i*3+2] = particleData[i*8+2];
   }
-  bhTree.build(initPos, N);
+  bhTree.build(initPos, N, params.centralMass);
   sim.uploadBHTree(bhTree);
 
   // Init controls on first call only
@@ -122,7 +122,7 @@ async function loop() {
         readbackInProgress = false;
         // Rebuild BH tree from latest positions (1-frame lag; imperceptible visually).
         if (bhTree) {
-          bhTree.build(particles.positions, particles.N);
+          bhTree.build(particles.positions, particles.N, s.centralMass);
           sim.uploadBHTree(bhTree);
         }
       });
