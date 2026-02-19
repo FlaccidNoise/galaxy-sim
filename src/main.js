@@ -1,10 +1,10 @@
 import { Renderer } from './render/Renderer.js';
 import { ParticleSystem } from './render/ParticleSystem.js';
-import { NBodyGPU } from './physics/NBodyGPU.js';
+import { NBodyGPU, requestGPUDevice } from './physics/NBodyGPU.js';
 import { galaxyDisk, uniformSphere, twoGalaxyCollision } from './physics/InitialConditions.js';
 import { Controls } from './ui/Controls.js';
 
-let renderer, particles, sim, controls;
+let renderer, particles, sim, controls, gpuDevice;
 
 // FPS counter elements
 let frameCount = 0, lastFPSTime = performance.now();
@@ -32,16 +32,18 @@ async function init(params) {
   const particleData = presetFns[params.preset](icParams);
   const N = particleData.length / 8;
 
-  // Init renderer on first call only
+  // Init renderer and GPU device on first call only
   if (!renderer) {
     renderer = await new Renderer().init();
+    gpuDevice = await requestGPUDevice();
+    console.log('WebGPU device:', gpuDevice);
   } else {
     // Remove old particles from scene
     if (particles) renderer.scene.remove(particles.points);
   }
 
   // Create new physics simulation
-  sim = new NBodyGPU(renderer.device, particleData);
+  sim = new NBodyGPU(gpuDevice, particleData);
 
   // Wait for async GPU init to complete
   await new Promise(resolve => {
@@ -51,7 +53,7 @@ async function init(params) {
 
   // Create new particle system
   particles = new ParticleSystem(renderer.scene, N);
-  particles.initStaging(renderer.device, particleData.byteLength);
+  particles.initStaging(gpuDevice, particleData.byteLength);
 
   // Init controls on first call only
   if (!controls) {
@@ -83,16 +85,16 @@ async function loop() {
   for (let i = 0; i < stepsPerFrame; i++) {
     sim.updateParams(s.dt, s.G, s.epsilon, sim.N);
 
-    const enc = renderer.device.createCommandEncoder();
+    const enc = gpuDevice.createCommandEncoder();
     sim.step(enc);
 
     if (i === stepsPerFrame - 1) {
       // Last step: queue readback in same encoder, submit, then update geometry
       particles.queueReadback(enc, sim.positionBuffer);
-      renderer.device.queue.submit([enc.finish()]);
+      gpuDevice.queue.submit([enc.finish()]);
       await particles.updateFromStaging(s.colorMode, 50.0);
     } else {
-      renderer.device.queue.submit([enc.finish()]);
+      gpuDevice.queue.submit([enc.finish()]);
     }
   }
 

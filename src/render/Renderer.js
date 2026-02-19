@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import WebGPURenderer from 'three/addons/renderers/webgpu/WebGPURenderer.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
@@ -15,14 +14,12 @@ export class Renderer {
   }
 
   async init() {
-    this.renderer = new WebGPURenderer({ antialias: false });
+    this.renderer = new THREE.WebGLRenderer({ antialias: false });
     this.renderer.setSize(innerWidth, innerHeight);
     this.renderer.setPixelRatio(devicePixelRatio);
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.2;
     document.body.appendChild(this.renderer.domElement);
-
-    await this.renderer.init();
 
     // OrbitControls
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
@@ -48,10 +45,6 @@ export class Renderer {
       this.renderer.setSize(innerWidth, innerHeight);
       this.composer.setSize(innerWidth, innerHeight);
     });
-
-    // Expose underlying WebGPU device for physics
-    this.device = this.renderer.backend.device;
-    console.log('WebGPU device acquired:', this.device);
 
     // Background starfield for depth
     const bgGeo = new THREE.BufferGeometry();

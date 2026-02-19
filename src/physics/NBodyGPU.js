@@ -1,3 +1,11 @@
+/** Request a WebGPU device. Throws if WebGPU is unavailable. */
+export async function requestGPUDevice() {
+  if (!navigator.gpu) throw new Error('WebGPU not supported in this browser. Use Chrome 113+.');
+  const adapter = await navigator.gpu.requestAdapter();
+  if (!adapter) throw new Error('No WebGPU adapter found.');
+  return adapter.requestDevice();
+}
+
 export class NBodyGPU {
   constructor(device, particleData) {
     this.device = device;
