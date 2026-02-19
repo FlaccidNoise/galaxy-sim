@@ -12,49 +12,92 @@ export function galaxyDisk(params) {
     diskRadius = 50.0,
     diskHeight = 2.0,
     centralMass = 1000.0,
-    starMass = 1.0,
+    starMass = 1.0,   // unused directly — mass now sampled per-star
     velDispersion = 0.5,
     G = 1.0,
+    armCount = 2,
+    armTightness = 0.35,
   } = params;
 
   const data = new Float32Array(N * STRIDE);
 
-  for (let i = 0; i < N; i++) {
-    const base = i * STRIDE;
+  // 20% of stars form a tight central bulge (old, low-mass, red/yellow)
+  const nBulge = Math.floor(N * 0.20);
 
-    // Exponential radial distribution via inverse CDF sampling
-    // CDF of exp(-r/r0): r = -r0 * ln(1 - u), r0 = diskRadius / 3
-    const r0 = diskRadius / 3.0;
-    const u = Math.random();
-    const r = -r0 * Math.log(1.0 - u * (1.0 - Math.exp(-diskRadius / r0)));
-    const theta = Math.random() * 2 * Math.PI;
+  for (let i = 1; i < N; i++) {
+    const base = i * STRIDE;
+    const isBulge = i <= nBulge;
+
+    let r, theta;
+
+    if (isBulge) {
+      // Tight Gaussian bulge
+      r     = Math.abs(gaussRandom()) * diskRadius * 0.15;
+      theta = Math.random() * 2 * Math.PI;
+    } else {
+      // Exponential radial CDF (same as before)
+      const r0 = diskRadius / 3.0;
+      const u  = Math.random();
+      r = -r0 * Math.log(1.0 - u * (1.0 - Math.exp(-diskRadius / r0)));
+
+      // Assign to an arm
+      const armIndex  = (i - nBulge - 1) % armCount;
+      const armOffset = armIndex * (2 * Math.PI / armCount);
+
+      // Logarithmic spiral centerline angle at radius r
+      const r0Spiral  = diskRadius * 0.1;
+      const thetaArm  = Math.log(Math.max(r, r0Spiral) / r0Spiral) / armTightness + armOffset;
+
+      // Scatter around arm — wider at larger radii
+      const scatter = 0.15 + (r / diskRadius) * 0.40;
+      theta = thetaArm + gaussRandom() * scatter;
+    }
 
     const x = r * Math.cos(theta);
     const y = r * Math.sin(theta);
-    // Gaussian scale height
     const z = gaussRandom() * diskHeight;
 
-    // Circular velocity: v_c = sqrt(G * M_enc / r)
-    // Simplified enclosed mass: central mass + stars inside r
-    const massEnc = centralMass + starMass * N * (r / diskRadius);
+    // Stellar mass: arm stars → upper IMF (hot blue), bulge → lower IMF (cool red)
+    let mass;
+    if (isBulge) {
+      // Lower IMF: 0.2 – 1.2 M☉, weighted toward low end
+      mass = 0.2 + Math.pow(Math.random(), 2.0) * 1.0;
+    } else {
+      // Check angular distance from arm centerline
+      const armIndex  = (i - nBulge - 1) % armCount;
+      const armOffset = armIndex * (2 * Math.PI / armCount);
+      const r0Spiral  = diskRadius * 0.1;
+      const thetaArm  = Math.log(Math.max(r, r0Spiral) / r0Spiral) / armTightness + armOffset;
+      const dTheta    = Math.abs(((theta - thetaArm) % (2 * Math.PI) + Math.PI) % (2 * Math.PI) - Math.PI);
+
+      if (dTheta < 0.4) {
+        // In arm: upper IMF — young hot stars, 1 – 20 M☉
+        mass = 1.0 + Math.pow(Math.random(), 2.5) * 19.0;
+      } else {
+        // Inter-arm disk: mixed, 0.3 – 2.0 M☉
+        mass = 0.3 + Math.pow(Math.random(), 1.5) * 1.7;
+      }
+    }
+
+    // Circular velocity
+    const massEnc = centralMass + mass * N * (r / diskRadius);
     const vc = r > 0.01 ? Math.sqrt(G * massEnc / r) : 0;
 
-    // Tangential velocity (perpendicular to radial direction in xy plane)
     const vx = -vc * Math.sin(theta) + gaussRandom() * velDispersion;
     const vy =  vc * Math.cos(theta) + gaussRandom() * velDispersion;
-    const vz = gaussRandom() * velDispersion * 0.2;
+    const vz =  gaussRandom() * velDispersion * 0.2;
 
     data[base + 0] = x;
     data[base + 1] = y;
     data[base + 2] = z;
-    data[base + 3] = starMass;
+    data[base + 3] = mass;
     data[base + 4] = vx;
     data[base + 5] = vy;
     data[base + 6] = vz;
-    data[base + 7] = 0; // pad
+    data[base + 7] = 0;
   }
 
-  // Place central mass as particle 0
+  // Particle 0: central mass (black hole / dense core)
   data[0] = 0; data[1] = 0; data[2] = 0;
   data[3] = centralMass;
   data[4] = 0; data[5] = 0; data[6] = 0;
