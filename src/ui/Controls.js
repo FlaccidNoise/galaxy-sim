@@ -5,13 +5,13 @@ export class Controls {
     this.sim = sim;
     this.particles = particles;
     this.renderer = renderer;
-    this._restartPending = false;
     this._onRestart = null;
+    this._restartTimer = null;
 
     this.state = {
       // Simulation
       paused: false,
-      speed: 1.0,
+      speed: 0.05,
       // Initial conditions
       preset: 'Galaxy Disk',
       N: 10000,
@@ -38,25 +38,25 @@ export class Controls {
     // Simulation folder
     const simFolder = gui.addFolder('Simulation');
     simFolder.add(this.state, 'paused').name('Pause');
-    simFolder.add(this.state, 'speed', 0.1, 10, 0.1).name('Speed');
+    simFolder.add(this.state, 'speed', 0.01, 10, 0.01).name('Speed');
     simFolder.add({ reset: () => this._restart() }, 'reset').name('Reset');
 
-    // Initial conditions folder
+    // Initial conditions folder — changes auto-restart after 600ms debounce
     const icFolder = gui.addFolder('Initial Conditions');
     icFolder.add(this.state, 'preset', ['Galaxy Disk', 'Uniform Sphere', 'Collision'])
-      .name('Preset').onChange(() => this._markRestartPending(icFolder));
+      .name('Preset').onChange(() => this._scheduleRestart());
     icFolder.add(this.state, 'N', 1000, 100000, 1000).name('N (stars)')
-      .onChange(() => this._markRestartPending(icFolder));
+      .onChange(() => this._scheduleRestart());
     icFolder.add(this.state, 'diskRadius', 10, 200).name('Disk Radius')
-      .onChange(() => this._markRestartPending(icFolder));
+      .onChange(() => this._scheduleRestart());
     icFolder.add(this.state, 'diskHeight', 0.5, 20).name('Disk Height')
-      .onChange(() => this._markRestartPending(icFolder));
+      .onChange(() => this._scheduleRestart());
     icFolder.add(this.state, 'centralMass', 0, 5000).name('Central Mass')
-      .onChange(() => this._markRestartPending(icFolder));
+      .onChange(v => this.sim.updateCentralMass(v));
     icFolder.add(this.state, 'velDispersion', 0, 5).name('Vel Dispersion')
-      .onChange(() => this._markRestartPending(icFolder));
+      .onChange(() => this._scheduleRestart());
 
-    // Physics folder
+    // Physics folder — already live (read from state each frame)
     const physFolder = gui.addFolder('Physics');
     physFolder.add(this.state, 'G', 0.1, 10).name('G');
     physFolder.add(this.state, 'epsilon', 0.1, 10).name('Softening ε');
@@ -73,11 +73,9 @@ export class Controls {
     });
   }
 
-  _markRestartPending(folder) {
-    if (!this._restartPending) {
-      this._restartPending = true;
-      folder.domElement.style.borderLeft = '3px solid orange';
-    }
+  _scheduleRestart() {
+    clearTimeout(this._restartTimer);
+    this._restartTimer = setTimeout(() => this._restart(), 600);
   }
 
   onRestart(fn) {
@@ -85,11 +83,8 @@ export class Controls {
   }
 
   _restart() {
-    this._restartPending = false;
-    // Clear orange border from all folders
-    document.querySelectorAll('.lil-gui .children').forEach(el => {
-      el.style.borderLeft = '';
-    });
+    clearTimeout(this._restartTimer);
+    this._restartTimer = null;
     if (this._onRestart) this._onRestart(this.state);
   }
 }

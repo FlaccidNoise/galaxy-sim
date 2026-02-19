@@ -6,6 +6,7 @@ import { Controls } from './ui/Controls.js';
 
 let renderer, particles, sim, controls, gpuDevice;
 let readbackInProgress = false;
+let stepAccumulator = 0;
 
 // FPS counter elements
 let frameCount = 0, lastFPSTime = performance.now();
@@ -81,15 +82,24 @@ async function loop() {
   }
 
   const s = controls.state;
-  const stepsPerFrame = Math.max(1, Math.round(s.speed));
 
-  for (let i = 0; i < stepsPerFrame; i++) {
+  // Fractional speed: accumulate sub-step credits so speed < 1 skips frames
+  stepAccumulator += s.speed;
+  const stepsThisFrame = Math.floor(stepAccumulator);
+  stepAccumulator -= stepsThisFrame;
+
+  if (stepsThisFrame === 0) {
+    renderer.render();
+    return;
+  }
+
+  for (let i = 0; i < stepsThisFrame; i++) {
     sim.updateParams(s.dt, s.G, s.epsilon, sim.N);
 
     const enc = gpuDevice.createCommandEncoder();
     sim.step(enc);
 
-    if (i === stepsPerFrame - 1 && !readbackInProgress) {
+    if (i === stepsThisFrame - 1 && !readbackInProgress) {
       // Last step: queue readback in same encoder, submit, then update geometry
       particles.queueReadback(enc, sim.positionBuffer);
       gpuDevice.queue.submit([enc.finish()]);

@@ -81,6 +81,13 @@ export class NBodyGPU {
     });
   }
 
+  updateCentralMass(mass) {
+    // Update particle 0's mass in both ping-pong buffers (byte offset 12 = 3 floats in)
+    const buf = new Float32Array([mass]);
+    this.device.queue.writeBuffer(this.buffers[0], 12, buf);
+    this.device.queue.writeBuffer(this.buffers[1], 12, buf);
+  }
+
   updateParams(dt, G, epsilon, N) {
     // Pack as [dt, G, epsilon², N_as_u32_reinterpreted]
     const arr = new Float32Array(4);
