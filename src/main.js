@@ -28,6 +28,7 @@ async function init(params) {
     diskHeight: params.diskHeight,
     centralMass: params.centralMass,
     velDispersion: params.velDispersion,
+    armCount: params.armCount,
     G: params.G,
   };
 
@@ -121,6 +122,7 @@ const defaultState = {
   diskHeight: 3,
   centralMass: 2000,
   velDispersion: 0.3,
+  armCount: 2,
   G: 1.0,
   epsilon: 2.0,
   dt: 0.01,

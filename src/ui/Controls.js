@@ -19,14 +19,14 @@ export class Controls {
       diskHeight: 2.0,
       centralMass: 1000.0,
       velDispersion: 0.5,
+      armCount: 2,
       // Physics
       G: 1.0,
       epsilon: 1.0,
       dt: 0.02,
       // Display
-      colorMode: 'Velocity',
+      colorMode: 'Spectral',
       bloomStrength: 1.5,
-      pointSize: 0.3,
     };
 
     this._build();
@@ -55,6 +55,8 @@ export class Controls {
       .onChange(v => this.sim.updateCentralMass(v));
     icFolder.add(this.state, 'velDispersion', 0, 5).name('Vel Dispersion')
       .onChange(() => this._scheduleRestart());
+    icFolder.add(this.state, 'armCount', 1, 6, 1).name('Arm Count')
+      .onChange(() => this._scheduleRestart());
 
     // Physics folder — already live (read from state each frame)
     const physFolder = gui.addFolder('Physics');
@@ -64,12 +66,9 @@ export class Controls {
 
     // Display folder
     const dispFolder = gui.addFolder('Display');
-    dispFolder.add(this.state, 'colorMode', ['Velocity', 'Mass']).name('Color Mode');
+    dispFolder.add(this.state, 'colorMode', ['Spectral', 'Velocity', 'Mass']).name('Color Mode');
     dispFolder.add(this.state, 'bloomStrength', 0, 3).name('Bloom').onChange(v => {
       this.renderer.setBloom(v, 0.4, 0.1);
-    });
-    dispFolder.add(this.state, 'pointSize', 0.05, 2).name('Point Size').onChange(v => {
-      this.particles.setPointSize(v);
     });
   }
 
