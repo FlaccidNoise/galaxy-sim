@@ -2,12 +2,306 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Galaxy Sim</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Space+Mono&display=swap" rel="stylesheet">
+
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #000; overflow: hidden; }
+    /* ══════════════════════════════════════════════════
+       Design System
+       ══════════════════════════════════════════════════ */
+    :root {
+      --clr-void: #00010a;
+      --clr-panel: rgba(4, 8, 28, 0.88);
+      --clr-panel-title: rgba(10, 18, 52, 0.96);
+      --clr-accent: #4d82ff;
+      --clr-accent-dim: rgba(77, 130, 255, 0.18);
+      --clr-star: #c8d8ff;
+      --clr-star-muted: rgba(200, 216, 255, 0.38);
+      --clr-border: rgba(77, 130, 255, 0.16);
+      --ease: cubic-bezier(0.4, 0, 0.2, 1);
+      --shadow-panel:
+        0 0 0 1px var(--clr-border),
+        0 12px 40px rgba(0, 0, 0, 0.75),
+        0 0 50px rgba(77, 130, 255, 0.04);
+    }
+
+    /* ══════════════════════════════════════════════════
+       Base
+       ══════════════════════════════════════════════════ */
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: var(--clr-void);
+      overflow: hidden;
+      font-family: 'Space Mono', monospace;
+    }
     canvas { display: block; }
+
+    /* ══════════════════════════════════════════════════
+       Accessibility
+       ══════════════════════════════════════════════════ */
+    .skip-link {
+      position: fixed;
+      top: -100%;
+      left: 16px;
+      padding: 8px 20px;
+      background: var(--clr-accent);
+      color: #fff;
+      font-family: 'Space Mono', monospace;
+      font-size: 0.75rem;
+      border-radius: 6px;
+      z-index: 10000;
+      transition: top 0.2s var(--ease);
+      text-decoration: none;
+    }
+    .skip-link:focus { top: 16px; }
+
+    /* ══════════════════════════════════════════════════
+       Loading Overlay
+       ══════════════════════════════════════════════════ */
+    #loading {
+      position: fixed;
+      inset: 0;
+      background: var(--clr-void);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 20px;
+      z-index: 9999;
+      transition: opacity 0.65s var(--ease);
+    }
+    #loading.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+    .loading-wordmark {
+      font-family: 'Orbitron', sans-serif;
+      font-size: clamp(1.4rem, 4vw, 2.4rem);
+      font-weight: 700;
+      letter-spacing: 0.4em;
+      color: var(--clr-star);
+      animation: pulse-glow 2.6s ease-in-out infinite;
+    }
+    .loading-spinner {
+      width: 40px;
+      height: 40px;
+      border: 1px solid var(--clr-border);
+      border-top-color: var(--clr-accent);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    .loading-status {
+      font-size: 0.62rem;
+      color: var(--clr-star-muted);
+      letter-spacing: 0.2em;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes pulse-glow {
+      0%, 100% { text-shadow: 0 0 18px rgba(77, 130, 255, 0.3); }
+      50%       { text-shadow: 0 0 42px rgba(77, 130, 255, 0.72), 0 0 70px rgba(100, 160, 255, 0.25); }
+    }
+
+    /* ══════════════════════════════════════════════════
+       Title HUD (top-center)
+       ══════════════════════════════════════════════════ */
+    #hud-title {
+      position: fixed;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 14px 32px 10px;
+      text-align: center;
+      pointer-events: none;
+      z-index: 100;
+      opacity: 0;
+    }
+    #hud-title.ready {
+      animation: fade-slide-down 0.7s var(--ease) 0.15s forwards;
+    }
+    .hud-title-main {
+      display: block;
+      font-family: 'Orbitron', sans-serif;
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: 0.5em;
+      color: var(--clr-star);
+      text-transform: uppercase;
+    }
+    .hud-title-sub {
+      display: block;
+      font-size: 0.54rem;
+      letter-spacing: 0.22em;
+      color: var(--clr-star-muted);
+      margin-top: 4px;
+    }
+
+    /* ══════════════════════════════════════════════════
+       FPS / Stats HUD (bottom-left)
+       ══════════════════════════════════════════════════ */
+    #fps {
+      position: fixed;
+      bottom: 18px;
+      left: 18px;
+      font-family: 'Space Mono', monospace;
+      font-size: 0.6rem;
+      line-height: 1.6;
+      color: var(--clr-star-muted);
+      letter-spacing: 0.1em;
+      pointer-events: none;
+      z-index: 100;
+      opacity: 0;
+    }
+    #fps.ready {
+      animation: fade-in 0.5s var(--ease) 0.3s forwards;
+    }
+
+    /* ══════════════════════════════════════════════════
+       Controls Hint (bottom-right, fades after 6s)
+       ══════════════════════════════════════════════════ */
+    #controls-hint {
+      position: fixed;
+      bottom: 18px;
+      right: 18px;
+      font-family: 'Space Mono', monospace;
+      font-size: 0.58rem;
+      line-height: 2;
+      letter-spacing: 0.1em;
+      color: var(--clr-star-muted);
+      text-align: right;
+      pointer-events: none;
+      z-index: 100;
+      opacity: 0;
+    }
+    #controls-hint.ready {
+      animation:
+        fade-in 0.5s var(--ease) 0.5s forwards,
+        fade-out 0.8s var(--ease) 6s forwards;
+    }
+    .hint-dim {
+      color: rgba(200, 216, 255, 0.20);
+    }
+
+    /* ══════════════════════════════════════════════════
+       Shared Keyframes
+       ══════════════════════════════════════════════════ */
+    @keyframes fade-in {
+      from { opacity: 0; }
+      to   { opacity: 1; }
+    }
+    @keyframes fade-out {
+      from { opacity: 1; }
+      to   { opacity: 0; }
+    }
+    @keyframes fade-slide-down {
+      from { opacity: 0; transform: translateX(-50%) translateY(-10px); }
+      to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+    }
+
+    /* ══════════════════════════════════════════════════
+       lil-gui Space Theme Override
+       ══════════════════════════════════════════════════ */
+    .lil-gui.root {
+      --background-color: var(--clr-panel);
+      --text-color: var(--clr-star);
+      --title-background-color: var(--clr-panel-title);
+      --title-text-color: #ffffff;
+      --widget-color: rgba(22, 40, 100, 0.72);
+      --hover-color: rgba(42, 70, 155, 0.82);
+      --focus-color: rgba(77, 130, 255, 0.50);
+      --number-color: #7ab4ff;
+      --string-color: #7affcc;
+      --font-family: 'Space Mono', monospace;
+      --font-size: 10px;
+      --input-element-height: 22px;
+      --padding: 6px;
+      --spacing: 4px;
+      --border-radius: 10px;
+      --width: 264px;
+
+      border: none !important;
+      box-shadow: var(--shadow-panel) !important;
+      backdrop-filter: blur(22px) !important;
+      -webkit-backdrop-filter: blur(22px) !important;
+
+      opacity: 0;
+    }
+    .lil-gui.root.ready {
+      animation: panel-enter 0.55s var(--ease) 0.25s forwards;
+    }
+    @keyframes panel-enter {
+      from { opacity: 0; transform: translateX(14px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+
+    /* Root title */
+    .lil-gui.root > .title {
+      font-family: 'Orbitron', sans-serif !important;
+      font-size: 0.6rem !important;
+      letter-spacing: 0.32em !important;
+      padding: 11px 8px !important;
+      border-bottom: 1px solid var(--clr-border) !important;
+    }
+
+    /* Folder title rows */
+    .lil-gui .lil-gui > .title {
+      font-family: 'Space Mono', monospace !important;
+      font-size: 0.57rem !important;
+      letter-spacing: 0.2em !important;
+      color: var(--clr-accent) !important;
+      text-transform: uppercase;
+      border-bottom: 1px solid rgba(77, 130, 255, 0.07) !important;
+      padding: 8px 8px !important;
+    }
+
+    /* Controller rows */
+    .lil-gui .controller {
+      border-bottom: 1px solid rgba(77, 130, 255, 0.05) !important;
+    }
+
+    /* Function/button controllers */
+    .lil-gui .controller.function .widget {
+      background: var(--clr-accent-dim) !important;
+      border: 1px solid var(--clr-border) !important;
+      border-radius: 5px !important;
+      transition:
+        background 0.18s var(--ease),
+        border-color 0.18s var(--ease),
+        transform 0.14s var(--ease),
+        box-shadow 0.18s var(--ease) !important;
+    }
+    .lil-gui .controller.function .widget:hover {
+      background: rgba(77, 130, 255, 0.32) !important;
+      border-color: var(--clr-accent) !important;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 16px rgba(77, 130, 255, 0.22) !important;
+    }
+    .lil-gui .controller.function .widget:active {
+      transform: translateY(0) !important;
+      box-shadow: none !important;
+    }
+
+    /* Focus rings */
+    .lil-gui *:focus-visible {
+      outline: 2px solid var(--clr-accent) !important;
+      outline-offset: 2px !important;
+    }
+
+    /* ══════════════════════════════════════════════════
+       Reduced Motion
+       ══════════════════════════════════════════════════ */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
   </style>
+
   <script type="importmap">
   {
     "imports": {
@@ -19,6 +313,30 @@
   </script>
 </head>
 <body>
+  <a href="#sim" class="skip-link">Skip to simulation</a>
+
+  <div id="loading" role="status" aria-live="polite">
+    <div class="loading-wordmark">GALAXY SIM</div>
+    <div class="loading-spinner" aria-hidden="true"></div>
+    <div id="loading-status" class="loading-status">Initializing WebGPU&hellip;</div>
+  </div>
+
+  <div id="hud-title" aria-hidden="true">
+    <span class="hud-title-main">Galaxy Sim</span>
+    <span class="hud-title-sub">N-body &middot; WebGPU &middot; Barnes-Hut</span>
+  </div>
+
+  <div id="fps" aria-live="off" aria-atomic="true"></div>
+
+  <div id="controls-hint" aria-hidden="true">
+    Drag &nbsp;&middot;&nbsp; Rotate<br>
+    Scroll &nbsp;&middot;&nbsp; Zoom<br>
+    Right-drag &nbsp;&middot;&nbsp; Pan<br>
+    <span class="hint-dim">H &nbsp;&middot;&nbsp; Toggle Panel</span>
+  </div>
+
+  <main id="sim" aria-label="Galaxy N-body simulation" tabindex="-1"></main>
+
   <script type="module" src="src/main.js"></script>
 </body>
 </html>

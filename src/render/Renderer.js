@@ -24,7 +24,7 @@ export class Renderer {
     // Linear tone mapping couldn't compress highlights; exposure boost made clusters white.
     this.renderer.toneMapping = THREE.ReinhardToneMapping;
     this.renderer.toneMappingExposure = 2.3;
-    document.body.appendChild(this.renderer.domElement);
+    (document.getElementById('sim') ?? document.body).appendChild(this.renderer.domElement);
 
     // OrbitControls
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
