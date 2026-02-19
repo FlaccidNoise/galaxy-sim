@@ -29,7 +29,7 @@ export class NBodyGPU {
 
     // Uniform buffer for simulation params
     this.paramsBuffer = device.createBuffer({
-      size: 16, // 4 floats (dt, G, epsilon2, N-as-float)
+      size: 16, // [dt: f32, G: f32, epsilon2: f32, N: u32] — 16 bytes total
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
