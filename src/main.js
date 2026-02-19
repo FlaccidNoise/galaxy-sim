@@ -7,6 +7,7 @@ import { BHTree } from './physics/BHTree.js';
 
 let renderer, particles, sim, controls, gpuDevice;
 let bhTree = null;
+let particleMasses = null;  // extracted from IC; covers all presets including multi-central-mass
 let readbackInProgress = false;
 let stepAccumulator = 0;
 
@@ -60,15 +61,20 @@ async function init(params) {
   particles = new ParticleSystem(renderer.scene, N);
   particles.initStaging(gpuDevice, particleData.byteLength);
 
+  // Extract per-particle masses from IC (handles all presets: single galaxy,
+  // collision with two central masses, uniform sphere, etc.).
+  particleMasses = new Float32Array(N);
+  const initPos  = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    initPos[i*3]     = particleData[i*8];
+    initPos[i*3 + 1] = particleData[i*8 + 1];
+    initPos[i*3 + 2] = particleData[i*8 + 2];
+    particleMasses[i] = particleData[i*8 + 3];
+  }
+
   // Build initial BH tree from IC data so frame 0 has valid physics.
   bhTree = new BHTree(N * 2 + 1000);
-  const initPos = new Float32Array(N * 3);
-  for (let i = 0; i < N; i++) {
-    initPos[i*3]   = particleData[i*8];
-    initPos[i*3+1] = particleData[i*8+1];
-    initPos[i*3+2] = particleData[i*8+2];
-  }
-  bhTree.build(initPos, N, params.centralMass);
+  bhTree.build(initPos, N, particleMasses);
   sim.uploadBHTree(bhTree);
 
   // Init controls on first call only
@@ -122,7 +128,7 @@ async function loop() {
         readbackInProgress = false;
         // Rebuild BH tree from latest positions (1-frame lag; imperceptible visually).
         if (bhTree) {
-          bhTree.build(particles.positions, particles.N, s.centralMass);
+          bhTree.build(particles.positions, particles.N, particleMasses);
           sim.uploadBHTree(bhTree);
         }
       });

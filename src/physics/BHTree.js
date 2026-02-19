@@ -36,11 +36,11 @@ export class BHTree {
 
   /**
    * Build the octree from a stride-3 positions array (x,y,z per particle).
-   * @param {Float32Array} positions
-   * @param {number}       N
-   * @param {number}       centralMass  Mass of particle 0 (default 1.0; all others = 1.0)
+   * @param {Float32Array}      positions  Stride-3: x,y,z per particle
+   * @param {number}            N
+   * @param {Float32Array|null} masses     Per-particle masses (length N). Null = all 1.0.
    */
-  build(positions, N, centralMass = 1.0) {
+  build(positions, N, masses = null) {
     this.numNodes = 0;
     const f = this.f32, i32 = this.i32;
 
@@ -67,7 +67,7 @@ export class BHTree {
 
     // ── insert all particles ──────────────────────────────────────────
     for (let p = 0; p < N; p++) {
-      const m = (p === 0) ? centralMass : 1.0;
+      const m = masses ? masses[p] : 1.0;
       this._insert(0, positions[p*3], positions[p*3+1], positions[p*3+2], m, 0);
     }
   }
