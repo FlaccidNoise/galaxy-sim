@@ -1,0 +1,319 @@
+// Galaxy render pipeline — raw WebGPU.
+// Entry points:
+//   vs_particle / fs_particle    — instanced billboard sprites, vertex-pulled
+//                                  straight from the physics storage buffer
+//   vs_fullscreen / fs_background — procedural deep-sky starfield
+//   vs_fullscreen / fs_downsample_first / fs_downsample — bloom mip chain down
+//   vs_fullscreen / fs_upsample  — bloom tent-filter up (additive)
+//   vs_fullscreen / fs_composite — scene + bloom, exposure, AgX, sRGB out
+
+// ── Shared particle layout (must match nbody_bh.wgsl) ──────────────────────
+struct Particle {
+    pos       : vec3f,
+    mass      : f32,
+    vel       : vec3f,
+    colorMass : f32,   // spectral classification mass (0 ⇒ fall back to mass)
+}
+
+struct Uniforms {
+    viewProj      : mat4x4f,
+    camRight      : vec3f,  tanHalfFov : f32,
+    camUp         : vec3f,  aspect     : f32,
+    camForward    : vec3f,  time       : f32,
+    camPos        : vec3f,  starIntensity : f32,
+    resolution    : vec2f,  sizeScale  : f32,  colorMode : u32,
+    speedScale    : f32,    centralIdx : u32,  _p1 : f32,  _p2 : f32,
+}
+
+@group(0) @binding(0) var<storage, read> particles : array<Particle>;
+@group(0) @binding(1) var<uniform> u : Uniforms;
+
+// ── Particle pass ───────────────────────────────────────────────────────────
+struct VSOut {
+    @builtin(position) pos : vec4f,
+    @location(0) quadUV : vec2f,   // [-1, 1] across the sprite
+    @location(1) color  : vec3f,
+}
+
+fn spectralColor(mass : f32) -> vec3f {
+    if (mass > 16.0)   { return vec3f(0.35, 0.55, 1.00); } // O
+    if (mass > 2.0)    { return vec3f(0.48, 0.65, 1.00); } // B
+    if (mass > 1.4)    { return vec3f(0.78, 0.87, 1.00); } // A
+    if (mass > 1.04)   { return vec3f(1.00, 1.00, 0.95); } // F
+    if (mass > 0.8)    { return vec3f(1.00, 0.95, 0.75); } // G
+    if (mass > 0.45)   { return vec3f(1.00, 0.65, 0.30); } // K
+    return vec3f(1.00, 0.45, 0.15);                        // M
+}
+
+fn velocityColor(speed : f32) -> vec3f {
+    let t = min(speed / max(u.speedScale, 0.001), 1.0);
+    if (t < 0.33) {
+        let s = t / 0.33;
+        return vec3f(1.0, s * 0.5, 0.0);
+    } else if (t < 0.66) {
+        let s = (t - 0.33) / 0.33;
+        return vec3f(1.0, 0.5 + s * 0.5, s * 0.5);
+    }
+    let s = (t - 0.66) / 0.34;
+    return vec3f(1.0 - s * 0.5, 1.0 - s * 0.5, 0.5 + s * 0.5);
+}
+
+fn massColor(mass : f32) -> vec3f {
+    let t = min(log(mass + 1.0) / 10.0, 1.0);
+    let g = select(t * 2.0, 1.0, t > 0.5);
+    return vec3f(g, g, 0.3 + t * 0.7);
+}
+
+@vertex
+fn vs_particle(@builtin(vertex_index) vi : u32,
+               @builtin(instance_index) ii : u32) -> VSOut {
+    var quad = array<vec2f, 6>(
+        vec2f(-1.0, -1.0), vec2f(1.0, -1.0), vec2f(-1.0, 1.0),
+        vec2f(-1.0,  1.0), vec2f(1.0, -1.0), vec2f(1.0, 1.0),
+    );
+    let corner = quad[vi];
+    let p = particles[ii];
+
+    var clip = u.viewProj * vec4f(p.pos, 1.0);
+
+    // Sprite size in pixels: luminosity-derived, matching the old JS sizing.
+    var size : f32;
+    if (ii == u.centralIdx) {
+        size = 8.0;            // central mass
+    } else {
+        let cm = select(p.colorMass, p.mass, p.colorMass <= 0.0);
+        let L  = pow(max(cm, 0.1), 3.5);
+        size   = clamp(log(L + 1.0) + 1.5, 2.0, 4.8);
+    }
+    let sizePx = max(size * 150.0 / max(clip.w, 0.1), 1.25) * u.sizeScale;
+
+    // Screen-aligned billboard: offset corners in NDC, scaled back by w.
+    clip = vec4f(clip.xy + corner * (sizePx / u.resolution) * clip.w, clip.zw);
+
+    var out : VSOut;
+    out.pos = clip;
+    out.quadUV = corner;
+
+    let cm = select(p.colorMass, p.mass, p.colorMass <= 0.0);
+    if (u.colorMode == 1u) {
+        out.color = velocityColor(length(p.vel));
+    } else if (u.colorMode == 2u) {
+        out.color = massColor(cm);
+    } else {
+        out.color = spectralColor(cm);
+    }
+    return out;
+}
+
+@fragment
+fn fs_particle(in : VSOut) -> @location(0) vec4f {
+    let d2 = dot(in.quadUV, in.quadUV);
+    if (d2 > 1.0) { discard; }
+    // Gaussian falloff; HDR additive — tone mapping handles the pile-up.
+    let intensity = exp(-d2 * 3.5) * u.starIntensity;
+    return vec4f(in.color * intensity, 1.0);
+}
+
+// ── Fullscreen triangle ─────────────────────────────────────────────────────
+struct FSOut {
+    @builtin(position) pos : vec4f,
+    @location(0) uv : vec2f,   // [0,1], y-down
+}
+
+@vertex
+fn vs_fullscreen(@builtin(vertex_index) vi : u32) -> FSOut {
+    var out : FSOut;
+    let x = f32(i32(vi & 1u) * 4 - 1);
+    let y = f32(i32(vi >> 1u) * 4 - 1);
+    out.pos = vec4f(x, y, 0.0, 1.0);
+    out.uv = vec2f(x, -y) * 0.5 + 0.5;
+    return out;
+}
+
+// ── Background starfield (procedural, view-direction hashed) ────────────────
+fn hash31(p : vec3f) -> f32 {
+    var q = fract(p * 443.8975);
+    q += dot(q, q.yzx + 19.19);
+    return fract((q.x + q.y) * q.z);
+}
+fn hash33(p : vec3f) -> vec3f {
+    var q = fract(p * vec3f(443.897, 441.423, 437.195));
+    q += dot(q, q.yxz + 19.19);
+    return fract((q.xxy + q.yxx) * q.zyx);
+}
+
+fn starLayer(dir : vec3f, cells : f32, density : f32, brightness : f32, sharp : f32) -> vec3f {
+    let g = dir * cells;
+    let cell = floor(g);
+    let h = hash33(cell);
+    if (h.z > density) { return vec3f(0.0); }
+    let starPos = cell + vec3f(0.15) + h * 0.7;
+    let d = length(g - starPos);
+    // Steep magnitude distribution: most stars dim, a rare few bright
+    let mag = pow(hash31(cell + 7.77), 18.0) * brightness + 0.003;
+    let core = exp(-d * d * sharp) * mag;
+    // Subtle temperature variation: blue-white to warm
+    let t = hash31(cell + 3.33);
+    let col = mix(vec3f(0.65, 0.75, 1.0), vec3f(1.0, 0.85, 0.65), t);
+    return col * core;
+}
+
+@fragment
+fn fs_background(in : FSOut) -> @location(0) vec4f {
+    let ndc = vec2f(in.uv.x * 2.0 - 1.0, 1.0 - in.uv.y * 2.0);
+    let dir = normalize(
+        u.camForward
+        + u.camRight * ndc.x * u.tanHalfFov * u.aspect
+        + u.camUp    * ndc.y * u.tanHalfFov
+    );
+    var col = starLayer(dir, 220.0, 0.10, 0.35, 380.0);
+    col += starLayer(dir, 90.0, 0.05, 0.8, 900.0);
+    return vec4f(col, 1.0);
+}
+
+// ── Bloom: 13-tap downsample (CoD: AW) ──────────────────────────────────────
+@group(0) @binding(0) var srcTex  : texture_2d<f32>;
+@group(0) @binding(1) var srcSamp : sampler;
+
+fn luma(c : vec3f) -> f32 { return dot(c, vec3f(0.2126, 0.7152, 0.0722)); }
+
+fn downsample13(uv : vec2f, texel : vec2f, karis : bool) -> vec3f {
+    let a = textureSampleLevel(srcTex, srcSamp, uv + texel * vec2f(-2.0,  2.0), 0.0).rgb;
+    let b = textureSampleLevel(srcTex, srcSamp, uv + texel * vec2f( 0.0,  2.0), 0.0).rgb;
+    let c = textureSampleLevel(srcTex, srcSamp, uv + texel * vec2f( 2.0,  2.0), 0.0).rgb;
+    let d = textureSampleLevel(srcTex, srcSamp, uv + texel * vec2f(-2.0,  0.0), 0.0).rgb;
+    let e = textureSampleLevel(srcTex, srcSamp, uv,                              0.0).rgb;
+    let f = textureSampleLevel(srcTex, srcSamp, uv + texel * vec2f( 2.0,  0.0), 0.0).rgb;
+    let g = textureSampleLevel(srcTex, srcSamp, uv + texel * vec2f(-2.0, -2.0), 0.0).rgb;
+    let h = textureSampleLevel(srcTex, srcSamp, uv + texel * vec2f( 0.0, -2.0), 0.0).rgb;
+    let i = textureSampleLevel(srcTex, srcSamp, uv + texel * vec2f( 2.0, -2.0), 0.0).rgb;
+    let j = textureSampleLevel(srcTex, srcSamp, uv + texel * vec2f(-1.0,  1.0), 0.0).rgb;
+    let k = textureSampleLevel(srcTex, srcSamp, uv + texel * vec2f( 1.0,  1.0), 0.0).rgb;
+    let l = textureSampleLevel(srcTex, srcSamp, uv + texel * vec2f(-1.0, -1.0), 0.0).rgb;
+    let m = textureSampleLevel(srcTex, srcSamp, uv + texel * vec2f( 1.0, -1.0), 0.0).rgb;
+
+    if (karis) {
+        // Firefly suppression: luminance-weighted groups (first downsample only)
+        var g0 = (a + b + d + e) * 0.25;
+        var g1 = (b + c + e + f) * 0.25;
+        var g2 = (d + e + g + h) * 0.25;
+        var g3 = (e + f + h + i) * 0.25;
+        var g4 = (j + k + l + m) * 0.25;
+        let w0 = 0.125 / (1.0 + luma(g0));
+        let w1 = 0.125 / (1.0 + luma(g1));
+        let w2 = 0.125 / (1.0 + luma(g2));
+        let w3 = 0.125 / (1.0 + luma(g3));
+        let w4 = 0.5   / (1.0 + luma(g4));
+        return (g0 * w0 + g1 * w1 + g2 * w2 + g3 * w3 + g4 * w4)
+             / (w0 + w1 + w2 + w3 + w4);
+    }
+    return e * 0.125
+         + (a + c + g + i) * 0.03125
+         + (b + d + f + h) * 0.0625
+         + (j + k + l + m) * 0.125;
+}
+
+@fragment
+fn fs_downsample_first(in : FSOut) -> @location(0) vec4f {
+    let texel = 1.0 / vec2f(textureDimensions(srcTex, 0));
+    var c = downsample13(in.uv, texel, true);
+    c = min(c, vec3f(64.0));   // clamp extreme HDR to keep bloom stable
+    return vec4f(c, 1.0);
+}
+
+@fragment
+fn fs_downsample(in : FSOut) -> @location(0) vec4f {
+    let texel = 1.0 / vec2f(textureDimensions(srcTex, 0));
+    return vec4f(downsample13(in.uv, texel, false), 1.0);
+}
+
+// ── Bloom: 3x3 tent upsample (rendered additively via blend state) ─────────
+@fragment
+fn fs_upsample(in : FSOut) -> @location(0) vec4f {
+    let texel = 1.0 / vec2f(textureDimensions(srcTex, 0));
+    let r = 1.0;
+    var s = textureSampleLevel(srcTex, srcSamp, in.uv, 0.0).rgb * 4.0;
+    s += textureSampleLevel(srcTex, srcSamp, in.uv + texel * vec2f(-r,  0.0), 0.0).rgb * 2.0;
+    s += textureSampleLevel(srcTex, srcSamp, in.uv + texel * vec2f( r,  0.0), 0.0).rgb * 2.0;
+    s += textureSampleLevel(srcTex, srcSamp, in.uv + texel * vec2f( 0.0, -r), 0.0).rgb * 2.0;
+    s += textureSampleLevel(srcTex, srcSamp, in.uv + texel * vec2f( 0.0,  r), 0.0).rgb * 2.0;
+    s += textureSampleLevel(srcTex, srcSamp, in.uv + texel * vec2f(-r,  -r), 0.0).rgb;
+    s += textureSampleLevel(srcTex, srcSamp, in.uv + texel * vec2f( r,  -r), 0.0).rgb;
+    s += textureSampleLevel(srcTex, srcSamp, in.uv + texel * vec2f(-r,   r), 0.0).rgb;
+    s += textureSampleLevel(srcTex, srcSamp, in.uv + texel * vec2f( r,   r), 0.0).rgb;
+    return vec4f(s / 16.0, 1.0);
+}
+
+// ── Composite: scene + bloom → exposure → AgX → sRGB ────────────────────────
+struct CompositeParams {
+    exposure      : f32,   // linear multiplier (2^EV)
+    bloomStrength : f32,
+    _c0 : f32,
+    _c1 : f32,
+}
+
+@group(0) @binding(0) var sceneTex  : texture_2d<f32>;
+@group(0) @binding(1) var bloomTex  : texture_2d<f32>;
+@group(0) @binding(2) var compSamp  : sampler;
+@group(0) @binding(3) var<uniform> comp : CompositeParams;
+
+// AgX tone mapping — ported from three.js (Filament-derived matrices,
+// Blender-matched contrast curve).
+fn agxContrast(x : vec3f) -> vec3f {
+    let x2 = x * x;
+    let x4 = x2 * x2;
+    let x6 = x4 * x2;
+    return -17.86 * x6 * x + 78.01 * x6 - 126.7 * x4 * x + 92.06 * x4
+           - 28.72 * x2 * x + 4.361 * x2 - 0.1718 * x + vec3f(0.002857);
+}
+
+fn agx(colorIn : vec3f) -> vec3f {
+    let AgXInset = mat3x3f(
+        vec3f(0.856627153315983, 0.137318972929847, 0.11189821299995),
+        vec3f(0.0951212405381588, 0.761241990602591, 0.0767994186031903),
+        vec3f(0.0482516061458583, 0.101439036467562, 0.811302368396859),
+    );
+    let AgXOutset = mat3x3f(
+        vec3f(1.1271005818144368, -0.1413297634984383, -0.14132976349843826),
+        vec3f(-0.11060664309660323, 1.157823702216272, -0.11060664309660294),
+        vec3f(-0.016493938717834573, -0.016493938717834257, 1.2519364065950405),
+    );
+    let srgbToRec2020 = mat3x3f(
+        vec3f(0.6274, 0.0691, 0.0164),
+        vec3f(0.3293, 0.9195, 0.0880),
+        vec3f(0.0433, 0.0114, 0.8956),
+    );
+    let rec2020ToSrgb = mat3x3f(
+        vec3f(1.6605, -0.1246, -0.0182),
+        vec3f(-0.5876, 1.1329, -0.1006),
+        vec3f(-0.0728, -0.0083, 1.1187),
+    );
+    const AgxMinEv = -12.47393;
+    const AgxMaxEv = 4.026069;
+
+    var color = srgbToRec2020 * colorIn;
+    color = AgXInset * color;
+    color = max(color, vec3f(1e-10));
+    color = log2(color);
+    color = (color - vec3f(AgxMinEv)) / (AgxMaxEv - AgxMinEv);
+    color = clamp(color, vec3f(0.0), vec3f(1.0));
+    color = agxContrast(color);
+    color = AgXOutset * color;
+    color = pow(max(color, vec3f(0.0)), vec3f(2.2));  // back to linear
+    color = rec2020ToSrgb * color;
+    return clamp(color, vec3f(0.0), vec3f(1.0));
+}
+
+fn linearToSrgb(c : vec3f) -> vec3f {
+    let lo = c * 12.92;
+    let hi = 1.055 * pow(max(c, vec3f(0.0)), vec3f(1.0 / 2.4)) - 0.055;
+    return select(hi, lo, c <= vec3f(0.0031308));
+}
+
+@fragment
+fn fs_composite(in : FSOut) -> @location(0) vec4f {
+    let scene = textureSampleLevel(sceneTex, compSamp, in.uv, 0.0).rgb;
+    let bloom = textureSampleLevel(bloomTex, compSamp, in.uv, 0.0).rgb;
+    var hdr = (scene + bloom * comp.bloomStrength) * comp.exposure;
+    return vec4f(linearToSrgb(agx(hdr)), 1.0);
+}
