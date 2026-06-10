@@ -41,10 +41,17 @@ export class NBodyGPU {
     device.queue.writeBuffer(this.buffers[0], 0, particleData);
     device.queue.writeBuffer(this.buffers[1], 0, particleData);
 
-    // Params uniform: [dt, G, epsilon², N, theta, pad, pad, pad] — 32 bytes
+    // Params uniform — 96 bytes, layout matches struct Params in the shader
     this.paramsBuffer = device.createBuffer({
-      size: 32,
+      size: 96,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+
+    // Per-particle specific energy (written by the force kernel, packed into
+    // the position readback for the drift diagnostic)
+    this.energyBuffer = device.createBuffer({
+      size: this.N * 4,
+      usage: GPUBufferUsage.STORAGE,
     });
 
     // BH tree buffer — sized generously (worker pool is N*4+1024 nodes).
@@ -88,7 +95,8 @@ export class NBodyGPU {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
 
-    // Bind group layout: particlesIn, particlesOut, params, bhNodes, posOut, perm
+    // Bind group layout: particlesIn, particlesOut, params, bhNodes, posOut,
+    // perm, energyOut
     this.bindGroupLayout = device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
@@ -97,6 +105,7 @@ export class NBodyGPU {
         { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
         { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
         { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+        { binding: 6, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
       ],
     });
     const layout = device.createPipelineLayout({ bindGroupLayouts: [this.bindGroupLayout] });
@@ -133,6 +142,28 @@ export class NBodyGPU {
         { binding: 3, resource: { buffer: this.permBuffer } },
       ],
     }));
+
+    // Star formation / recycling: in-place mutation of particles + stellar.
+    // Bind groups for all 4 parity combinations (particle × stellar).
+    this.sfLayout = device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+        { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+      ],
+    });
+    this.sfPipeline = device.createComputePipeline({
+      layout: device.createPipelineLayout({ bindGroupLayouts: [this.sfLayout] }),
+      compute: { module: shader, entryPoint: 'star_formation' },
+    });
+    this.sfBindGroups = [0, 1].map(p => [0, 1].map(s => device.createBindGroup({
+      layout: this.sfLayout,
+      entries: [
+        { binding: 0, resource: { buffer: this.buffers[p] } },
+        { binding: 1, resource: { buffer: this.stellarBuffers[s] } },
+        { binding: 2, resource: { buffer: this.paramsBuffer } },
+      ],
+    })));
 
     // Per-step COM refresh: separate layout (bhBuffer is read_write here;
     // it must not also be bound read-only in the same dispatch scope).
@@ -181,6 +212,7 @@ export class NBodyGPU {
         { binding: 3, resource: { buffer: this.bhBuffer } },
         { binding: 4, resource: { buffer: this.posCompactBuffer } },
         { binding: 5, resource: { buffer: this.permBuffer } },
+        { binding: 6, resource: { buffer: this.energyBuffer } },
       ],
     });
   }
@@ -218,17 +250,38 @@ export class NBodyGPU {
     this.device.queue.writeBuffer(this.buffers[1], idx * 32 + 12, buf);
   }
 
-  updateParams(dt, G, epsilon, theta = 0.5, haloMass = 0, haloA = 1) {
-    // Pack as [dt, G, epsilon², N_as_u32, theta, haloMass, haloA, pad]
-    const arr = new Float32Array(8);
+  updateParams({ dt, G, epsilon, theta = 0.5, haloMass = 0, haloA = 1,
+                 gasDrag = 0, time = 0, agingRate = 25, sfDensity = 1e9,
+                 sfEff = 0, sfDt = 0, haloCenters = [] }) {
+    const arr = new Float32Array(24);
+    const u32 = new Uint32Array(arr.buffer);
     arr[0] = dt;
     arr[1] = G;
     arr[2] = epsilon * epsilon;
-    new Uint32Array(arr.buffer)[3] = this.N;
+    u32[3] = this.N;
     arr[4] = theta;
     arr[5] = haloMass;
     arr[6] = haloA;
+    arr[7] = gasDrag;
+    arr[8] = time;
+    arr[9] = agingRate;
+    arr[10] = sfDensity;
+    arr[11] = sfEff;
+    arr[12] = sfDt;
+    u32[13] = Math.min(haloCenters.length, 2);
+    if (haloCenters[0]) arr.set(haloCenters[0], 16);
+    if (haloCenters[1]) arr.set(haloCenters[1], 20);
     this.device.queue.writeBuffer(this.paramsBuffer, 0, arr.buffer);
+  }
+
+  /** Star formation + stellar recycling pass — call once per frame, after steps. */
+  encodeStarFormation(commandEncoder) {
+    if (!this.ready) return;
+    const pass = commandEncoder.beginComputePass();
+    pass.setPipeline(this.sfPipeline);
+    pass.setBindGroup(0, this.sfBindGroups[this.currentBuffer][this.stellarCurrent]);
+    pass.dispatchWorkgroups(Math.ceil(this.N / 256));
+    pass.end();
   }
 
   /** Upload a freshly-built BH tree (raw flat buffer from the worker). */
@@ -311,5 +364,6 @@ export class NBodyGPU {
     this.posStagingBuffer?.destroy();
     this.permBuffer?.destroy();
     this.refreshUniform?.destroy();
+    this.energyBuffer?.destroy();
   }
 }

@@ -10,9 +10,14 @@ let treeWorker = null;
 let posTransfer = null;        // Float32Array (vec4/particle) ping-ponged with worker
 let readbackInFlight = false;  // GPU staging map pending
 let workerBusy = false;        // tree build in progress
-let pendingTree = null;        // {tree, numNodes, perm, centralIdx} awaiting GPU application
-let centralIdx = 0;            // current index of the central-mass particle
-let haloEnabled = false;       // analytic halo active for this preset
+let pendingTree = null;        // {tree, numNodes, perm, centralIdx, …} awaiting GPU application
+let centralIdx = 0;            // current index of galaxy A's central particle
+let centralIdx2 = -1;          // galaxy B's central (Collision preset), -1 = none
+let haloPerGalaxy = 0;         // halo mass per halo for this preset (0 = off)
+let haloCenters = [];          // SMOOTHED galaxy centres (EMA of BH positions)
+let sfRho0 = 1;                // mean disk density — SF threshold reference
+let energyBaseline = null;     // first total-energy reading after restart
+let energyDrift = 0;
 let stepAccumulator = 0;
 let simTime = 0;
 
@@ -39,9 +44,11 @@ async function init(params) {
     'Collision': twoGalaxyCollision,
   };
 
-  // Halo applies to the single-galaxy preset only: the analytic potential is
-  // pinned at the origin, which is wrong for moving/colliding systems.
-  haloEnabled = params.preset === 'Galaxy Disk';
+  // Halos are centred on each galaxy's central particle, so they move with
+  // their galaxy (essential for the Collision preset). Mass is PER halo.
+  haloPerGalaxy = params.preset === 'Galaxy Disk' ? params.haloFactor * params.N
+                : params.preset === 'Collision' ? params.haloFactor * Math.floor(params.N / 2)
+                : 0;
   const icParams = {
     N: params.N,
     diskRadius: params.diskRadius,
@@ -50,9 +57,13 @@ async function init(params) {
     toomreQ: params.toomreQ,
     armCount: params.armCount,
     G: params.G,
-    haloMass: haloEnabled ? params.haloFactor * params.N : 0,
+    haloMass: haloPerGalaxy,
     haloA: params.haloScale * params.diskRadius,
   };
+  // Mean midplane density heuristic — reference for the SF threshold
+  sfRho0 = params.N / (Math.PI * params.diskRadius * params.diskRadius * params.diskHeight);
+  energyBaseline = null;
+  energyDrift = 0;
 
   const { data: particleData, stellar: stellarData } = presetFns[params.preset](icParams);
   const N = particleData.length / 8;
@@ -84,8 +95,19 @@ async function init(params) {
 
   // Morton-sort the ICs on the CPU so the GPU starts in Z-curve order, and
   // build the frame-0 tree from the same sorted snapshot.
-  const boot = sortAndBuild(particleData, stellarData, N);
+  const trackIdx2 = params.preset === 'Collision' ? Math.floor(N / 2) : -1;
+  const boot = sortAndBuild(particleData, stellarData, N, trackIdx2);
   centralIdx = boot.centralIdx;
+  centralIdx2 = boot.centralIdx2;
+
+  // Halo centres start at the BH initial positions, then track them via EMA
+  haloCenters = [];
+  if (haloPerGalaxy > 0) {
+    haloCenters.push([...boot.sorted.subarray(centralIdx * 8, centralIdx * 8 + 3)]);
+    if (centralIdx2 >= 0) {
+      haloCenters.push([...boot.sorted.subarray(centralIdx2 * 8, centralIdx2 * 8 + 3)]);
+    }
+  }
 
   setLoadingStatus('Building compute pipeline…');
   const newSim = new NBodyGPU(gpuDevice, boot.sorted, boot.sortedStellar);
@@ -94,7 +116,7 @@ async function init(params) {
 
   // Tree worker: owns all subsequent rebuilds, off the main thread
   treeWorker = new Worker(new URL('./physics/bhWorker.js', import.meta.url), { type: 'module' });
-  treeWorker.postMessage({ type: 'config', N, masses: boot.masses, centralIdx });
+  treeWorker.postMessage({ type: 'config', N, masses: boot.masses, centralIdx, centralIdx2 });
   posTransfer = new Float32Array(N * 4);
   treeWorker.onmessage = (e) => {
     if (e.data.type !== 'tree') return;
@@ -108,7 +130,13 @@ async function init(params) {
 
   sim = newSim;
   renderer.centralIdx = centralIdx;
-  window.__sim = sim;  // debug/verification hook
+  window.__sim = sim;  // debug/verification hooks
+  window.__dbg = () => ({ centralIdx, centralIdx2, haloPerGalaxy, sfRho0, simTime });
+  window.__state = controls?.state;
+  window.__restart = (over = {}) => {
+    Object.assign(controls.state, over);
+    return init(controls.state).catch(fail);
+  };
 
   // Init controls on first call only
   if (!controls) {
@@ -120,6 +148,7 @@ async function init(params) {
       treeWorker.postMessage({ type: 'centralMass', value: v });
     });
   }
+  window.__state = controls.state;
 }
 
 function loop() {
@@ -129,7 +158,8 @@ function loop() {
   frameCount++;
   const now = performance.now();
   if (now - lastFPSTime > 1000) {
-    fpsEl.textContent = `${frameCount} fps | N=${(sim?.N ?? 0).toLocaleString()}`;
+    const drift = energyBaseline !== null ? ` | ΔE ${(energyDrift * 100).toFixed(1)}%` : '';
+    fpsEl.textContent = `${frameCount} fps | N=${(sim?.N ?? 0).toLocaleString()}${drift}`;
     frameCount = 0;
     lastFPSTime = now;
   }
@@ -158,25 +188,55 @@ function loop() {
 
   // Apply any freshly built tree: reorder particles along the Morton curve,
   // then upload the tree (whose leaf indices assume the new order).
-  const haloMass = haloEnabled ? s.haloFactor * sim.N : 0;
-  const haloA = s.haloScale * s.diskRadius;
+  const paramsNow = {
+    dt: s.dt, G: s.G, epsilon: s.epsilon, theta: s.theta,
+    haloMass: haloPerGalaxy,
+    haloA: s.haloScale * s.diskRadius,
+    haloCenters,
+    gasDrag: s.gasDrag,
+    time: simTime,
+    agingRate: s.agingRate,
+    sfDensity: s.sfThreshold * sfRho0,
+    sfEff: s.sfEff,
+    sfDt: s.dt * stepsThisFrame,
+  };
 
   if (pendingTree) {
-    sim.updateParams(s.dt, s.G, s.epsilon, s.theta, haloMass, haloA);
+    centralIdx = pendingTree.centralIdx;
+    centralIdx2 = pendingTree.centralIdx2 ?? -1;
+    renderer.centralIdx = centralIdx;
+    // Drift the halo centres toward the BH positions (EMA: follows the
+    // galaxy's orbit, ignores the BH's encounter jitter)
+    const k = 0.1;
+    const targets = [pendingTree.bh1, pendingTree.bh2].filter(Boolean);
+    for (let h = 0; h < haloCenters.length && h < targets.length; h++) {
+      for (let c = 0; c < 3; c++) {
+        haloCenters[h][c] += (targets[h][c] - haloCenters[h][c]) * k;
+      }
+    }
+    sim.updateParams(paramsNow);
     sim.applyPermutation(enc, pendingTree.perm);
     sim.uploadBHTree(pendingTree.tree, pendingTree.numNodes, pendingTree.levelRanges);
-    centralIdx = pendingTree.centralIdx;
-    renderer.centralIdx = centralIdx;
+    if (typeof pendingTree.energy === 'number' && Number.isFinite(pendingTree.energy)) {
+      if (energyBaseline === null && pendingTree.energy !== 0) {
+        energyBaseline = pendingTree.energy;
+      } else if (energyBaseline) {
+        energyDrift = (pendingTree.energy - energyBaseline) / Math.abs(energyBaseline);
+      }
+    }
     pendingTree = null;
   }
 
   if (stepsThisFrame > 0) {
-    sim.updateParams(s.dt, s.G, s.epsilon, s.theta, haloMass, haloA);  // once per frame
+    sim.updateParams(paramsNow);  // once per frame
     for (let i = 0; i < stepsThisFrame; i++) {
       sim.encodeRefresh(enc);  // re-sum tree COMs from current positions
       sim.step(enc);
       simTime += s.dt;
     }
+
+    // Star formation + stellar recycling (uses densities the steps just wrote)
+    sim.encodeStarFormation(enc);
 
     // Queue a positions readback for the tree worker when the previous
     // round trip (GPU map + worker build) has fully completed.

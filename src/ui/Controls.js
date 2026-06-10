@@ -30,6 +30,9 @@ export class Controls {
       theta: 0.5,
       haloFactor: 3.0,   // halo mass as multiple of stellar mass (0 = no halo)
       haloScale: 1.2,    // halo scale radius as multiple of disk radius
+      gasDrag: 0.25,     // gas cooling rate (damps non-orbital motion)
+      sfEff: 0.012,      // star-formation efficiency (per time unit at threshold)
+      sfThreshold: 2.5,  // SF density threshold, × mean disk density
       // Display
       colorMode: 'Spectral',
       agingRate: 25.0,   // Myr of stellar aging per sim time unit (0 = frozen)
@@ -80,6 +83,9 @@ export class Controls {
       .onChange(() => this._scheduleRestart());
     physFolder.add(this.state, 'haloScale', 0.3, 4, 0.1).name('Halo Scale ×R')
       .onChange(() => this._scheduleRestart());
+    physFolder.add(this.state, 'gasDrag', 0, 1, 0.01).name('Gas Cooling');
+    physFolder.add(this.state, 'sfEff', 0, 1, 0.01).name('SF Efficiency');
+    physFolder.add(this.state, 'sfThreshold', 0.5, 10, 0.1).name('SF Threshold ×ρ̄');
 
     // Display folder — drives renderer directly
     const r = this.renderer;

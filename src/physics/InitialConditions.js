@@ -213,13 +213,22 @@ export function galaxyDisk(params) {
       vx = -vRot * sinT + gaussRandom() * sB;
       vy =  vRot * cosT + gaussRandom() * sB;
       vz =  gaussRandom() * sB * 0.8;
-    } else {
+    }
+
+    // Gas fraction per component: arms are gas-rich, the disk moderately,
+    // the bulge is gas-free. Gas starts colder and thinner than the stars.
+    const isGas = c === 1 ? Math.random() < 0.45
+                : c === 2 ? Math.random() < 0.30
+                : false;
+
+    if (c !== 0) {
       // Disk/arm: sech² vertical profile, epicyclic velocity ellipsoid
       const u = Math.min(Math.max(Math.random(), 1e-6), 1 - 1e-6);
-      z = z0 * Math.atanh(2 * u - 1) * 0.5;
-      const sR = gridAt(sigR, r);
+      const cold = isGas ? 0.5 : 1.0;
+      z = z0 * Math.atanh(2 * u - 1) * 0.5 * (isGas ? 0.6 : 1.0);
+      const sR = gridAt(sigR, r) * cold;
       const vR = gaussRandom() * sR;
-      const vPhi = gridAt(vPhiMean, r) + gaussRandom() * gridAt(sigPhi, r);
+      const vPhi = gridAt(vPhiMean, r) + gaussRandom() * gridAt(sigPhi, r) * cold;
       const sZ = 0.5 * sR;
       vx = vR * cosT - vPhi * sinT;
       vy = vR * sinT + vPhi * cosT;
@@ -228,12 +237,16 @@ export function galaxyDisk(params) {
 
     // Stellar population: IMF mass + age. Bulge is ancient (8–12 Gyr),
     // disk spans the galaxy's life, arms are newborn (O/B stars alive).
-    // Dust rides the cold thin-disk material: strongest along arms,
-    // moderate in the disk, none in the bulge.
-    const dustW = Math.exp(-Math.abs(z) / Math.max(z0, 0.1));
-    if (c === 0)      sampleStar(stellar, i, 8000, 12000, 0);
-    else if (c === 1) sampleStar(stellar, i, 0, 50, dustW);
-    else              sampleStar(stellar, i, 0, 10000, dustW * 0.55);
+    // GAS carries the dust (stellar.x = -1 marks gas).
+    if (isGas) {
+      const dustW = Math.exp(-Math.abs(z) / Math.max(z0, 0.1));
+      stellar[i * 4] = -1;
+      stellar[i * 4 + 1] = 0;
+      stellar[i * 4 + 2] = Math.random();
+      stellar[i * 4 + 3] = 0.3 + 0.7 * dustW;
+    } else if (c === 0) sampleStar(stellar, i, 8000, 12000, 0);
+    else if (c === 1)   sampleStar(stellar, i, 0, 50, 0);
+    else                sampleStar(stellar, i, 0, 10000, 0);
 
     data[base + 0] = x;
     data[base + 1] = y;
@@ -242,7 +255,7 @@ export function galaxyDisk(params) {
     data[base + 4] = vx;
     data[base + 5] = vy;
     data[base + 6] = vz;
-    data[base + 7] = 0;
+    data[base + 7] = isGas ? -1 : 0;   // gas flag for the physics kernel
   }
 
   // ── particle 0: supermassive central mass (black hole — stellarMass 0) ────
@@ -290,10 +303,12 @@ export function twoGalaxyCollision(params) {
     approachVel = 0.8,
   } = params;
 
+  const { haloMass = 0, haloA = diskRadius } = params;
   const halfN = Math.floor(N / 2);
-  // No analytic halo in the collision preset (it would be pinned at the
-  // origin); each galaxy is self-bound by stars + central mass.
-  const paramsA = { N: halfN, diskRadius, diskHeight, centralMass, toomreQ, G, haloMass: 0 };
+  // Each galaxy carries its own moving halo (centred on its central-mass
+  // particle in the kernel) — haloMass here is PER GALAXY so the rotation
+  // curves match the live forces.
+  const paramsA = { N: halfN, diskRadius, diskHeight, centralMass, toomreQ, G, haloMass, haloA };
   const paramsB = { ...paramsA, N: N - halfN };
 
   const A = galaxyDisk(paramsA);
@@ -316,6 +331,7 @@ export function twoGalaxyCollision(params) {
     data[dst + 4] = diskA[src + 4] + approachVel;
     data[dst + 5] = diskA[src + 5];
     data[dst + 6] = diskA[src + 6];
+    data[dst + 7] = diskA[src + 7];   // gas flag
   }
 
   // Galaxy B: offset +separation/2 along x, tilted 30°, moving -x
@@ -334,6 +350,7 @@ export function twoGalaxyCollision(params) {
     data[dst + 4] = diskB[src + 4] - approachVel;
     data[dst + 5] = diskB[src + 5];
     data[dst + 6] = diskB[src + 6];
+    data[dst + 7] = diskB[src + 7];   // gas flag
   }
 
   return { data, stellar };

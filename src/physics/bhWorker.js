@@ -23,6 +23,7 @@ let tree = null;
 let masses = null;
 let N = 0;
 let centralIdx = 0;
+let centralIdx2 = -1;
 
 // Scratch (allocated on config)
 let codes, indices, scratch, counts, sortedPos, sortedMass, sortedCodes;
@@ -34,6 +35,7 @@ self.onmessage = (e) => {
     N = msg.N;
     masses = msg.masses;
     centralIdx = msg.centralIdx ?? 0;
+    centralIdx2 = msg.centralIdx2 ?? -1;
     tree = new MortonTree(N);
     codes = new Uint32Array(N);
     indices = new Uint32Array(N);
@@ -56,26 +58,37 @@ self.onmessage = (e) => {
     const rootSize = computeMortonCodes(pos, N, 4, codes);
     const perm = radixSortIndices(codes, indices, scratch, counts, N);
 
-    let newCentral = centralIdx;
+    // Total energy diagnostic: the force kernel packs per-particle specific
+    // energy into the readback's w component.
+    let energy = 0;
+    let newCentral = centralIdx, newCentral2 = centralIdx2;
     for (let i = 0; i < N; i++) {
       const s = perm[i];
       if (s === centralIdx) newCentral = i;
+      if (s === centralIdx2) newCentral2 = i;
       sortedPos[i * 3]     = pos[s * 4];
       sortedPos[i * 3 + 1] = pos[s * 4 + 1];
       sortedPos[i * 3 + 2] = pos[s * 4 + 2];
       sortedMass[i] = masses[s];
       sortedCodes[i] = codes[s];
+      energy += pos[i * 4 + 3];
     }
     centralIdx = newCentral;
+    centralIdx2 = newCentral2;
     const t = masses; masses = sortedMass; sortedMass = t;
 
     tree.build(sortedCodes, sortedPos, masses, N, rootSize);
 
     const out = tree._buf.slice(0, tree.byteLength);
     const permCopy = new Uint32Array(perm);
+    const bh1 = [sortedPos[centralIdx * 3], sortedPos[centralIdx * 3 + 1], sortedPos[centralIdx * 3 + 2]];
+    const bh2 = centralIdx2 >= 0
+      ? [sortedPos[centralIdx2 * 3], sortedPos[centralIdx2 * 3 + 1], sortedPos[centralIdx2 * 3 + 2]]
+      : null;
     self.postMessage(
       { type: 'tree', tree: out, numNodes: tree.numNodes, perm: permCopy,
-        levelRanges: tree.levelRanges, centralIdx, positions: pos.buffer },
+        levelRanges: tree.levelRanges, centralIdx, centralIdx2, energy,
+        bh1, bh2, positions: pos.buffer },
       [out, permCopy.buffer, pos.buffer],
     );
   }

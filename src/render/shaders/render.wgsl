@@ -75,14 +75,10 @@ fn starState(M : f32, ageIn : f32, seed : f32) -> StarState {
     let tempMS = 5778.0 * pow(M, 0.54);
     let snDur = 15.0;   // Myr — stretched so a flash lasts ~1 s of real time
 
-    // Massive stars cycle: MS → giant → supernova → dark remnant → reborn.
-    // The rebirth (randomized per star via seed) is a stateless stand-in for
-    // ongoing star formation — it keeps a steady supernova rate alive.
-    var ageMyr = ageIn;
-    if (M >= 8.0) {
-        let deadDur = 400.0 + seed * 1800.0;
-        ageMyr = ageIn % (tMS + tGiant + snDur + deadDur);
-    }
+    // Lifecycle is linear: the star-formation compute pass returns massive
+    // remnants to the gas phase, and dense gas births new stars — so the
+    // supernova rate is sustained by actual star formation.
+    let ageMyr = ageIn;
 
     var s : StarState;
     if (ageMyr < tMS) {
@@ -142,12 +138,15 @@ fn vs_particle(@builtin(vertex_index) vi : u32,
 
     var clip = u.viewProj * vec4f(p.pos, 1.0);
 
-    // Photometry from the stellar lifecycle (or BH special case)
+    // Photometry from the stellar lifecycle (or BH / gas special cases)
     var temp : f32;
     var lum : f32;
-    if (ii == u.centralIdx || st.x <= 0.0) {
-        temp = 9000.0;          // central black hole: compact hot glow
+    if (st.x > -0.5 && st.x <= 0.0) {
+        temp = 9000.0;          // central black hole(s): compact hot glow
         lum = 60.0;
+    } else if (st.x < -0.5) {
+        temp = 10000.0;         // cold gas: barely-there blue shimmer —
+        lum = 0.0006;           // its real visual role is the dust it carries
     } else {
         let ageMyr = max(u.time * u.agingRate - st.y, 0.0);
         let s = starState(st.x, ageMyr, st.z);
@@ -211,8 +210,8 @@ fn vs_dust(@builtin(vertex_index) vi : u32,
     );
     var out : DustOut;
     let st = stellar[ii];
-    // Subsample carriers via seed; collapse non-carriers to a clipped point
-    if (st.w < 0.15 || st.z > 0.45 || u.dustStrength <= 0.0) {
+    // Dust lives in the GAS (stellar.x = -1); stars carry none.
+    if (st.x > -0.5 || st.w < 0.1 || u.dustStrength <= 0.0) {
         out.pos = collapse();
         out.quadUV = vec2f(0.0);
         out.strength = 0.0;
