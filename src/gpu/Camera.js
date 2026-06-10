@@ -14,8 +14,9 @@ export class Camera {
     // Spherical state around target (current vs. damped goal)
     this.target = [0, 0, 0];
     this.theta = 0;            // azimuth
-    this.phi = Math.atan2(15, 115);   // elevation — matches old camera (0,15,115)
-    this.radius = Math.hypot(15, 115);
+    // Disk lies in the XY plane (normal = +Z); phi=0 is face-on, π/2 edge-on.
+    this.phi = 0.85;           // ~49° inclination: classic galaxy-photo angle
+    this.radius = 130;
     this._goal = { theta: this.theta, phi: this.phi, radius: this.radius, target: [...this.target] };
 
     // Outputs (recomputed in update())

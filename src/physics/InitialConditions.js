@@ -46,12 +46,12 @@ export function mainSequenceLifetimeMyr(m) {
  * ALREADY have exploded/faded long before `ageMyr` aren't oversampled),
  * birth time in Myr before t=0.
  */
-function sampleStar(stellar, i, ageMinMyr, ageMaxMyr) {
+function sampleStar(stellar, i, ageMinMyr, ageMaxMyr, dustWeight = 0) {
   const ageMyr = ageMinMyr + Math.random() * (ageMaxMyr - ageMinMyr);
   stellar[i * 4] = kroupaIMF();
   stellar[i * 4 + 1] = -ageMyr;           // birthTime in Myr (scaled later)
   stellar[i * 4 + 2] = Math.random();     // per-star seed
-  stellar[i * 4 + 3] = 0;
+  stellar[i * 4 + 3] = dustWeight;        // dust-lane carrier weight (0 = none)
 }
 
 /**
@@ -228,9 +228,12 @@ export function galaxyDisk(params) {
 
     // Stellar population: IMF mass + age. Bulge is ancient (8–12 Gyr),
     // disk spans the galaxy's life, arms are newborn (O/B stars alive).
-    if (c === 0)      sampleStar(stellar, i, 8000, 12000);
-    else if (c === 1) sampleStar(stellar, i, 0, 50);
-    else              sampleStar(stellar, i, 0, 10000);
+    // Dust rides the cold thin-disk material: strongest along arms,
+    // moderate in the disk, none in the bulge.
+    const dustW = Math.exp(-Math.abs(z) / Math.max(z0, 0.1));
+    if (c === 0)      sampleStar(stellar, i, 8000, 12000, 0);
+    else if (c === 1) sampleStar(stellar, i, 0, 50, dustW);
+    else              sampleStar(stellar, i, 0, 10000, dustW * 0.55);
 
     data[base + 0] = x;
     data[base + 1] = y;

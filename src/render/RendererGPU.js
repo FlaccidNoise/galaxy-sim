@@ -24,8 +24,10 @@ export class RendererGPU {
     this.speedScale = 50.0;
     this.centralIdx = 0;        // tracks the central-mass particle through sorts
     this.agingRate = 25.0;      // Myr of stellar aging per simulation time unit
+    this.dustStrength = 0.45;
+    this.hiiStrength = 0.6;
 
-    this._particleBindGroups = new Map(); // particleBuffer → (stellarBuffer → bind group)
+    this._sceneBindGroups = new Map(); // pipeline → particleBuffer → stellarBuffer → bind group
   }
 
   async init() {
@@ -45,7 +47,7 @@ export class RendererGPU {
 
     // Uniforms
     this.uniformBuffer = device.createBuffer({
-      size: 160, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      size: 176, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.compositeParams = device.createBuffer({
       size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -80,6 +82,42 @@ export class RendererGPU {
       vertex: { module, entryPoint: 'vs_particle' },
       fragment: {
         module, entryPoint: 'fs_particle',
+        targets: [{
+          format: HDR,
+          blend: {
+            color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
+            alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
+          },
+        }],
+      },
+      primitive: { topology: 'triangle-list' },
+    });
+
+    // Dust: multiplicative extinction (dst *= 1 − srcRGB), drawn after stars
+    this.dustPipeline = device.createRenderPipeline({
+      label: 'dust',
+      layout: 'auto',
+      vertex: { module, entryPoint: 'vs_dust' },
+      fragment: {
+        module, entryPoint: 'fs_dust',
+        targets: [{
+          format: HDR,
+          blend: {
+            color: { srcFactor: 'zero', dstFactor: 'one-minus-src', operation: 'add' },
+            alpha: { srcFactor: 'zero', dstFactor: 'one', operation: 'add' },
+          },
+        }],
+      },
+      primitive: { topology: 'triangle-list' },
+    });
+
+    // H-II nebulae: additive pink emission on top of the dust
+    this.hiiPipeline = device.createRenderPipeline({
+      label: 'hii',
+      layout: 'auto',
+      vertex: { module, entryPoint: 'vs_hii' },
+      fragment: {
+        module, entryPoint: 'fs_hii',
         targets: [{
           format: HDR,
           blend: {
@@ -144,7 +182,7 @@ export class RendererGPU {
     }
 
     this._buildStaticBindGroups();
-    this._particleBindGroups.clear();
+    this._sceneBindGroups.clear();
   }
 
   _buildStaticBindGroups() {
@@ -198,16 +236,15 @@ export class RendererGPU {
     });
   }
 
-  _particleBindGroup(buffer, stellarBuffer) {
-    let inner = this._particleBindGroups.get(buffer);
-    if (!inner) {
-      inner = new Map();
-      this._particleBindGroups.set(buffer, inner);
-    }
+  _sceneBindGroup(pipeline, buffer, stellarBuffer) {
+    let byBuffer = this._sceneBindGroups.get(pipeline);
+    if (!byBuffer) { byBuffer = new Map(); this._sceneBindGroups.set(pipeline, byBuffer); }
+    let inner = byBuffer.get(buffer);
+    if (!inner) { inner = new Map(); byBuffer.set(buffer, inner); }
     let bg = inner.get(stellarBuffer);
     if (!bg) {
       bg = this.device.createBindGroup({
-        layout: this.particlePipeline.getBindGroupLayout(0),
+        layout: pipeline.getBindGroupLayout(0),
         entries: [
           { binding: 0, resource: { buffer } },
           { binding: 1, resource: { buffer: this.uniformBuffer } },
@@ -220,7 +257,7 @@ export class RendererGPU {
   }
 
   _writeUniforms(camera, time) {
-    const u = new Float32Array(40);
+    const u = new Float32Array(44);
     u.set(camera.viewProj, 0);
     u.set(camera.right, 16);  u[19] = Math.tan(camera.fovY / 2);
     u.set(camera.up, 20);     u[23] = camera.aspect;
@@ -232,6 +269,8 @@ export class RendererGPU {
     u[36] = this.speedScale;
     new Uint32Array(u.buffer)[37] = this.centralIdx;
     u[38] = this.agingRate;
+    u[39] = this.dustStrength;
+    u[40] = this.hiiStrength;
     this.device.queue.writeBuffer(this.uniformBuffer, 0, u);
 
     this.device.queue.writeBuffer(this.compositeParams, 0,
@@ -256,8 +295,19 @@ export class RendererGPU {
       pass.draw(3);
 
       pass.setPipeline(this.particlePipeline);
-      pass.setBindGroup(0, this._particleBindGroup(particleBuffer, stellarBuffer));
+      pass.setBindGroup(0, this._sceneBindGroup(this.particlePipeline, particleBuffer, stellarBuffer));
       pass.draw(6, particleCount);
+
+      if (this.dustStrength > 0) {
+        pass.setPipeline(this.dustPipeline);
+        pass.setBindGroup(0, this._sceneBindGroup(this.dustPipeline, particleBuffer, stellarBuffer));
+        pass.draw(6, particleCount);
+      }
+      if (this.hiiStrength > 0) {
+        pass.setPipeline(this.hiiPipeline);
+        pass.setBindGroup(0, this._sceneBindGroup(this.hiiPipeline, particleBuffer, stellarBuffer));
+        pass.draw(6, particleCount);
+      }
       pass.end();
     }
 

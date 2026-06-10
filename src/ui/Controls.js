@@ -37,6 +37,8 @@ export class Controls {
       bloomStrength: 0.35,
       starIntensity: 1.0,
       sizeScale: 1.0,
+      dustStrength: 0.45,
+      hiiStrength: 0.6,
     };
 
     this._build();
@@ -94,6 +96,10 @@ export class Controls {
       .onChange(v => { r.starIntensity = v; });
     dispFolder.add(this.state, 'sizeScale', 0.3, 3, 0.05).name('Star Size')
       .onChange(v => { r.sizeScale = v; });
+    dispFolder.add(this.state, 'dustStrength', 0, 1.5, 0.05).name('Dust Lanes')
+      .onChange(v => { r.dustStrength = v; });
+    dispFolder.add(this.state, 'hiiStrength', 0, 2, 0.05).name('H-II Nebulae')
+      .onChange(v => { r.hiiStrength = v; });
   }
 
   _scheduleRestart() {

@@ -22,7 +22,8 @@ struct Uniforms {
     camForward    : vec3f,  time       : f32,
     camPos        : vec3f,  starIntensity : f32,
     resolution    : vec2f,  sizeScale  : f32,  colorMode : u32,
-    speedScale    : f32,    centralIdx : u32,  agingRate : f32,  _p2 : f32,
+    speedScale    : f32,    centralIdx : u32,  agingRate : f32,  dustStrength : f32,
+    hiiStrength   : f32,    _q0 : f32,  _q1 : f32,  _q2 : f32,
 }
 
 @group(0) @binding(0) var<storage, read> particles : array<Particle>;
@@ -186,6 +187,105 @@ fn fs_particle(in : VSOut) -> @location(0) vec4f {
     if (d2 > 1.0) { discard; }
     // Gaussian falloff; luminosity is already baked into the vertex color.
     return vec4f(in.color * exp(-d2 * 3.5), 1.0);
+}
+
+// ── Dust extinction sprites ─────────────────────────────────────────────────
+// Disk/arm particles near the midplane carry dust (stellar.w). Rendered as
+// large WORLD-SPACE soft sprites with multiplicative blending
+// (dst *= 1 − srcRGB): wavelength-dependent extinction — blue absorbed more
+// than red — gives the brown lanes real galaxies have.
+struct DustOut {
+    @builtin(position) pos : vec4f,
+    @location(0) quadUV : vec2f,
+    @location(1) strength : f32,
+}
+
+fn collapse() -> vec4f { return vec4f(0.0, 0.0, 2.0, 1.0); }  // clipped away
+
+@vertex
+fn vs_dust(@builtin(vertex_index) vi : u32,
+           @builtin(instance_index) ii : u32) -> DustOut {
+    var quad = array<vec2f, 6>(
+        vec2f(-1.0, -1.0), vec2f(1.0, -1.0), vec2f(-1.0, 1.0),
+        vec2f(-1.0,  1.0), vec2f(1.0, -1.0), vec2f(1.0, 1.0),
+    );
+    var out : DustOut;
+    let st = stellar[ii];
+    // Subsample carriers via seed; collapse non-carriers to a clipped point
+    if (st.w < 0.15 || st.z > 0.45 || u.dustStrength <= 0.0) {
+        out.pos = collapse();
+        out.quadUV = vec2f(0.0);
+        out.strength = 0.0;
+        return out;
+    }
+    let p = particles[ii];
+    var clip = u.viewProj * vec4f(p.pos, 1.0);
+    // world-space size: fat fuzzy blobs that overlap into lanes
+    let worldSize = 2.2 + st.z * 6.0;
+    let projScale = u.resolution.y / (2.0 * u.tanHalfFov);
+    let sizePx = worldSize * projScale / max(clip.w, 0.1);
+    let corner = quad[vi];
+    clip = vec4f(clip.xy + corner * (sizePx / u.resolution) * clip.w, clip.zw);
+    out.pos = clip;
+    out.quadUV = corner;
+    out.strength = st.w * u.dustStrength;
+    return out;
+}
+
+@fragment
+fn fs_dust(in : DustOut) -> @location(0) vec4f {
+    let d2 = dot(in.quadUV, in.quadUV);
+    if (d2 > 1.0) { discard; }
+    let a = exp(-d2 * 3.0) * in.strength * 0.16;
+    // extinction per channel: blue suffers most → lanes go warm brown
+    return vec4f(a * 0.55, a * 0.8, a * 1.0, 1.0);
+}
+
+// ── H-II emission nebulae ───────────────────────────────────────────────────
+// Hot young O stars ionize their surroundings: a soft pink Hα halo,
+// rendered additively at world scale.
+@vertex
+fn vs_hii(@builtin(vertex_index) vi : u32,
+          @builtin(instance_index) ii : u32) -> DustOut {
+    var quad = array<vec2f, 6>(
+        vec2f(-1.0, -1.0), vec2f(1.0, -1.0), vec2f(-1.0, 1.0),
+        vec2f(-1.0,  1.0), vec2f(1.0, -1.0), vec2f(1.0, 1.0),
+    );
+    var out : DustOut;
+    let st = stellar[ii];
+    var ok = false;
+    if (st.x >= 12.0 && u.hiiStrength > 0.0 && ii != u.centralIdx) {
+        // only while the star is actually on the (possibly recycled) MS
+        let ageMyr = max(u.time * u.agingRate - st.y, 0.0);
+        let s = starState(st.x, ageMyr, st.z);
+        ok = s.lum > 100.0 && s.temp > 15000.0;
+    }
+    if (!ok) {
+        out.pos = collapse();
+        out.quadUV = vec2f(0.0);
+        out.strength = 0.0;
+        return out;
+    }
+    let p = particles[ii];
+    var clip = u.viewProj * vec4f(p.pos, 1.0);
+    let worldSize = 3.0 + st.z * 4.0;
+    let projScale = u.resolution.y / (2.0 * u.tanHalfFov);
+    let sizePx = worldSize * projScale / max(clip.w, 0.1);
+    let corner = quad[vi];
+    clip = vec4f(clip.xy + corner * (sizePx / u.resolution) * clip.w, clip.zw);
+    out.pos = clip;
+    out.quadUV = corner;
+    out.strength = u.hiiStrength;
+    return out;
+}
+
+@fragment
+fn fs_hii(in : DustOut) -> @location(0) vec4f {
+    let d2 = dot(in.quadUV, in.quadUV);
+    if (d2 > 1.0) { discard; }
+    let a = exp(-d2 * 4.0) * in.strength * 0.10;
+    // Hα-dominated emission: saturated pink-red
+    return vec4f(vec3f(1.0, 0.35, 0.48) * a, 1.0);
 }
 
 // ── Fullscreen triangle ─────────────────────────────────────────────────────
