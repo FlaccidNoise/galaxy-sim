@@ -201,3 +201,17 @@ fn apply_permutation(@builtin(global_invocation_id) gid : vec3u) {
     if (i >= params.N) { return; }
     particlesOut[i] = particlesIn[perm[i]];
 }
+
+// Stellar-state gather (same permutation, separate ping-pong pair — the
+// stellar buffers only flip on permutation, not every step).
+@group(0) @binding(0) var<storage, read>       stellarIn  : array<vec4f>;
+@group(0) @binding(1) var<storage, read_write> stellarOut : array<vec4f>;
+@group(0) @binding(2) var<uniform>             spParams   : Params;
+@group(0) @binding(3) var<storage, read>       spPerm     : array<u32>;
+
+@compute @workgroup_size(256)
+fn apply_permutation_stellar(@builtin(global_invocation_id) gid : vec3u) {
+    let i = gid.x;
+    if (i >= spParams.N) { return; }
+    stellarOut[i] = stellarIn[spPerm[i]];
+}

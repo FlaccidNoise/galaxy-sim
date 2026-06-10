@@ -22,11 +22,13 @@ struct Uniforms {
     camForward    : vec3f,  time       : f32,
     camPos        : vec3f,  starIntensity : f32,
     resolution    : vec2f,  sizeScale  : f32,  colorMode : u32,
-    speedScale    : f32,    centralIdx : u32,  _p1 : f32,  _p2 : f32,
+    speedScale    : f32,    centralIdx : u32,  agingRate : f32,  _p2 : f32,
 }
 
 @group(0) @binding(0) var<storage, read> particles : array<Particle>;
 @group(0) @binding(1) var<uniform> u : Uniforms;
+// Stellar state: [mass M☉, birthTime Myr (≤0 at t=0), seed, reserved]
+@group(0) @binding(2) var<storage, read> stellar : array<vec4f>;
 
 // ── Particle pass ───────────────────────────────────────────────────────────
 struct VSOut {
@@ -35,14 +37,76 @@ struct VSOut {
     @location(1) color  : vec3f,
 }
 
-fn spectralColor(mass : f32) -> vec3f {
-    if (mass > 16.0)   { return vec3f(0.35, 0.55, 1.00); } // O
-    if (mass > 2.0)    { return vec3f(0.48, 0.65, 1.00); } // B
-    if (mass > 1.4)    { return vec3f(0.78, 0.87, 1.00); } // A
-    if (mass > 1.04)   { return vec3f(1.00, 1.00, 0.95); } // F
-    if (mass > 0.8)    { return vec3f(1.00, 0.95, 0.75); } // G
-    if (mass > 0.45)   { return vec3f(1.00, 0.65, 0.30); } // K
-    return vec3f(1.00, 0.45, 0.15);                        // M
+// Planckian-locus blackbody color (Tanner Helland's fit to CIE data),
+// normalized to [0,1] linear-ish sRGB. Valid ~1000–40000 K.
+fn blackbodyRGB(tempK : f32) -> vec3f {
+    let t = clamp(tempK, 1000.0, 40000.0) / 100.0;
+    var r : f32; var g : f32; var b : f32;
+    if (t <= 66.0) {
+        r = 1.0;
+        g = clamp((99.4708025861 * log(t) - 161.1195681661) / 255.0, 0.0, 1.0);
+    } else {
+        r = clamp(1.292936186 * pow(t - 60.0, -0.1332047592), 0.0, 1.0);
+        g = clamp(1.1298908609 * pow(t - 60.0, -0.0755148492), 0.0, 1.0);
+    }
+    if (t >= 66.0) {
+        b = 1.0;
+    } else if (t <= 19.0) {
+        b = 0.0;
+    } else {
+        b = clamp((138.5177312231 * log(t - 10.0) - 305.0447927307) / 255.0, 0.0, 1.0);
+    }
+    return vec3f(r, g, b);
+}
+
+// ── Stellar lifecycle, derived statelessly from (mass, age) ────────────────
+// MS lifetime t_MS ≈ 10 Gyr · M^-2.5. Phases: main sequence → red giant
+// (cool, ×60 brighten) → for ≥8 M☉ a supernova flash then a near-invisible
+// remnant; below 8 M☉ a hot dim white dwarf that cools.
+struct StarState {
+    temp : f32,
+    lum  : f32,
+}
+
+fn starState(M : f32, ageIn : f32, seed : f32) -> StarState {
+    let tMS = 10000.0 * pow(M, -2.5);
+    let tGiant = tMS * 0.12 + 15.0;
+    let tempMS = 5778.0 * pow(M, 0.54);
+    let snDur = 15.0;   // Myr — stretched so a flash lasts ~1 s of real time
+
+    // Massive stars cycle: MS → giant → supernova → dark remnant → reborn.
+    // The rebirth (randomized per star via seed) is a stateless stand-in for
+    // ongoing star formation — it keeps a steady supernova rate alive.
+    var ageMyr = ageIn;
+    if (M >= 8.0) {
+        let deadDur = 400.0 + seed * 1800.0;
+        ageMyr = ageIn % (tMS + tGiant + snDur + deadDur);
+    }
+
+    var s : StarState;
+    if (ageMyr < tMS) {
+        s.temp = tempMS;
+        s.lum = pow(M, 3.5);
+    } else if (ageMyr < tMS + tGiant) {
+        let f = (ageMyr - tMS) / tGiant;
+        s.temp = mix(tempMS, 3400.0, clamp(f * 2.5, 0.0, 1.0));
+        s.lum = pow(M, 3.5) * mix(1.0, 60.0, f * f);
+    } else if (M >= 8.0) {
+        let sn = ageMyr - tMS - tGiant;
+        if (sn < snDur) {
+            let f = sn / snDur;
+            s.temp = 9000.0;
+            s.lum = 5.0e4 * exp(-5.0 * f);
+        } else {
+            s.temp = 40000.0;  // neutron star: hot, vanishingly dim
+            s.lum = 0.0005;
+        }
+    } else {
+        let cool = (ageMyr - tMS - tGiant) * 2.0e-4;
+        s.temp = 14000.0 / (1.0 + cool);
+        s.lum = 0.004;
+    }
+    return s;
 }
 
 fn velocityColor(speed : f32) -> vec3f {
@@ -73,18 +137,30 @@ fn vs_particle(@builtin(vertex_index) vi : u32,
     );
     let corner = quad[vi];
     let p = particles[ii];
+    let st = stellar[ii];
 
     var clip = u.viewProj * vec4f(p.pos, 1.0);
 
-    // Sprite size in pixels: luminosity-derived, matching the old JS sizing.
-    var size : f32;
-    if (ii == u.centralIdx) {
-        size = 8.0;            // central mass
+    // Photometry from the stellar lifecycle (or BH special case)
+    var temp : f32;
+    var lum : f32;
+    if (ii == u.centralIdx || st.x <= 0.0) {
+        temp = 9000.0;          // central black hole: compact hot glow
+        lum = 60.0;
     } else {
-        let cm = select(p.colorMass, p.mass, p.colorMass <= 0.0);
-        let L  = pow(max(cm, 0.1), 3.5);
-        size   = clamp(log(L + 1.0) + 1.5, 2.0, 4.8);
+        let ageMyr = max(u.time * u.agingRate - st.y, 0.0);
+        let s = starState(st.x, ageMyr, st.z);
+        temp = s.temp;
+        lum = s.lum;
     }
+
+    // Perceptual luminosity compression: full L spans ~1e-4..1e4+, which
+    // additive blending can't take raw. L^0.55 keeps giants dominant
+    // without nuking the frame; AgX rolls off the rest.
+    let intensity = pow(max(lum, 1e-5), 0.55) * u.starIntensity;
+
+    // Sprite size grows slowly with brightness; supernovae get big.
+    let size = clamp(1.1 + 1.05 * log(1.0 + intensity), 1.4, 10.0);
     let sizePx = max(size * 150.0 / max(clip.w, 0.1), 1.25) * u.sizeScale;
 
     // Screen-aligned billboard: offset corners in NDC, scaled back by w.
@@ -94,13 +170,12 @@ fn vs_particle(@builtin(vertex_index) vi : u32,
     out.pos = clip;
     out.quadUV = corner;
 
-    let cm = select(p.colorMass, p.mass, p.colorMass <= 0.0);
     if (u.colorMode == 1u) {
-        out.color = velocityColor(length(p.vel));
+        out.color = velocityColor(length(p.vel)) * max(intensity, 0.4);
     } else if (u.colorMode == 2u) {
-        out.color = massColor(cm);
+        out.color = massColor(max(st.x, 0.05)) * max(intensity, 0.4);
     } else {
-        out.color = spectralColor(cm);
+        out.color = blackbodyRGB(temp) * intensity;
     }
     return out;
 }
@@ -109,9 +184,8 @@ fn vs_particle(@builtin(vertex_index) vi : u32,
 fn fs_particle(in : VSOut) -> @location(0) vec4f {
     let d2 = dot(in.quadUV, in.quadUV);
     if (d2 > 1.0) { discard; }
-    // Gaussian falloff; HDR additive — tone mapping handles the pile-up.
-    let intensity = exp(-d2 * 3.5) * u.starIntensity;
-    return vec4f(in.color * intensity, 1.0);
+    // Gaussian falloff; luminosity is already baked into the vertex color.
+    return vec4f(in.color * exp(-d2 * 3.5), 1.0);
 }
 
 // ── Fullscreen triangle ─────────────────────────────────────────────────────

@@ -23,8 +23,9 @@ export class RendererGPU {
     this.colorMode = 0;         // 0 spectral, 1 velocity, 2 mass
     this.speedScale = 50.0;
     this.centralIdx = 0;        // tracks the central-mass particle through sorts
+    this.agingRate = 25.0;      // Myr of stellar aging per simulation time unit
 
-    this._particleBindGroups = new Map(); // particle buffer → bind group
+    this._particleBindGroups = new Map(); // particleBuffer → (stellarBuffer → bind group)
   }
 
   async init() {
@@ -197,17 +198,23 @@ export class RendererGPU {
     });
   }
 
-  _particleBindGroup(buffer) {
-    let bg = this._particleBindGroups.get(buffer);
+  _particleBindGroup(buffer, stellarBuffer) {
+    let inner = this._particleBindGroups.get(buffer);
+    if (!inner) {
+      inner = new Map();
+      this._particleBindGroups.set(buffer, inner);
+    }
+    let bg = inner.get(stellarBuffer);
     if (!bg) {
       bg = this.device.createBindGroup({
         layout: this.particlePipeline.getBindGroupLayout(0),
         entries: [
           { binding: 0, resource: { buffer } },
           { binding: 1, resource: { buffer: this.uniformBuffer } },
+          { binding: 2, resource: { buffer: stellarBuffer } },
         ],
       });
-      this._particleBindGroups.set(buffer, bg);
+      inner.set(stellarBuffer, bg);
     }
     return bg;
   }
@@ -224,6 +231,7 @@ export class RendererGPU {
     new Uint32Array(u.buffer)[35] = this.colorMode;
     u[36] = this.speedScale;
     new Uint32Array(u.buffer)[37] = this.centralIdx;
+    u[38] = this.agingRate;
     this.device.queue.writeBuffer(this.uniformBuffer, 0, u);
 
     this.device.queue.writeBuffer(this.compositeParams, 0,
@@ -231,7 +239,7 @@ export class RendererGPU {
   }
 
   /** Encode the full frame into the given command encoder. */
-  encode(encoder, camera, particleBuffer, particleCount, time) {
+  encode(encoder, camera, particleBuffer, stellarBuffer, particleCount, time) {
     this._writeUniforms(camera, time);
 
     // 1. Scene: background + particles into HDR target
@@ -248,7 +256,7 @@ export class RendererGPU {
       pass.draw(3);
 
       pass.setPipeline(this.particlePipeline);
-      pass.setBindGroup(0, this._particleBindGroup(particleBuffer));
+      pass.setBindGroup(0, this._particleBindGroup(particleBuffer, stellarBuffer));
       pass.draw(6, particleCount);
       pass.end();
     }

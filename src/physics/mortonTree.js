@@ -186,10 +186,10 @@ export class MortonTree {
 
 /**
  * One-shot helper for bootstrap: Morton-sort full 8-float-stride particle
- * data on the CPU and build the matching tree.
- * @returns {{ sorted: Float32Array, tree: MortonTree, perm: Uint32Array, centralIdx: number }}
+ * data (plus the vec4 stellar-state array) on the CPU and build the
+ * matching tree.
  */
-export function sortAndBuild(particleData, N) {
+export function sortAndBuild(particleData, stellarData, N) {
   const codes = new Uint32Array(N);
   const indices = new Uint32Array(N);
   const scratch = new Uint32Array(N);
@@ -199,6 +199,7 @@ export function sortAndBuild(particleData, N) {
   const perm = radixSortIndices(codes, indices, scratch, counts, N);
 
   const sorted = new Float32Array(N * 8);
+  const sortedStellar = new Float32Array(N * 4);
   const sortedCodes = new Uint32Array(N);
   const sortedPos = new Float32Array(N * 3);
   const sortedMass = new Float32Array(N);
@@ -207,6 +208,7 @@ export function sortAndBuild(particleData, N) {
     const s = perm[i];
     if (s === 0) centralIdx = i;
     sorted.set(particleData.subarray(s * 8, s * 8 + 8), i * 8);
+    sortedStellar.set(stellarData.subarray(s * 4, s * 4 + 4), i * 4);
     sortedCodes[i] = codes[s];
     sortedPos[i * 3] = particleData[s * 8];
     sortedPos[i * 3 + 1] = particleData[s * 8 + 1];
@@ -216,5 +218,5 @@ export function sortAndBuild(particleData, N) {
 
   const tree = new MortonTree(N);
   tree.build(sortedCodes, sortedPos, sortedMass, N, rootSize);
-  return { sorted, tree, perm: new Uint32Array(perm), centralIdx, masses: sortedMass };
+  return { sorted, sortedStellar, tree, perm: new Uint32Array(perm), centralIdx, masses: sortedMass };
 }

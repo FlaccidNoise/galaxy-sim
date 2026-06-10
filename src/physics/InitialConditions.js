@@ -1,10 +1,57 @@
-// Particle layout: [x, y, z, mass, vx, vy, vz, colorMass] per particle (stride = 8 floats)
+// Particle layout: [x, y, z, mass, vx, vy, vz, pad] per particle (stride = 8 floats)
+// Stellar layout:  [stellarMass M☉, birthTime (sim units, ≤0 at t=0), seed, 0]
 const STRIDE = 8;
 
 function gaussRandom() {
   // `|| EPSILON` guards Math.random() returning 0 → log(0) = -Infinity → NaN
   const u = Math.random() || Number.EPSILON, v = Math.random();
   return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+/**
+ * Sample a stellar mass from the Kroupa (2001) IMF:
+ *   dN/dM ∝ M^-1.3 for 0.08–0.5 M☉, ∝ M^-2.3 above 0.5 M☉.
+ * ~3/4 of stars come out below 0.5 M☉ — dim red dwarfs — which is what
+ * gives the rare luminous giants room to blaze in HDR.
+ * @param {number} mMax  upper cutoff (already-dead stars excluded at birth)
+ */
+export function kroupaIMF(mMax = 100) {
+  // Segment number fractions for [0.08, 0.5] vs [0.5, mMax] (α = 1.3 / 2.3)
+  // ∫M^-1.3 over [0.08,0.5] = (0.08^-0.3 − 0.5^-0.3)/0.3 ≈ 2.74
+  // ∫M^-2.3 · 0.5-continuity over [0.5,mMax] ≈ 0.5^-1.3·(1−(2mMax)^-1.3)/1.3·…
+  const lowInt = (Math.pow(0.08, -0.3) - Math.pow(0.5, -0.3)) / 0.3;
+  const hiCut = Math.max(Math.min(mMax, 100), 0.5001);
+  const k2 = Math.pow(0.5, -1.3 + 2.3); // continuity factor 0.5^1.0
+  const hiInt = k2 * (Math.pow(0.5, -1.3) - Math.pow(hiCut, -1.3)) / 1.3;
+  const pLow = lowInt / (lowInt + hiInt);
+  const u = Math.random();
+  if (u < pLow) {
+    // inverse CDF on M^-1.3 segment
+    const v = Math.random();
+    const a = Math.pow(0.08, -0.3), b = Math.pow(0.5, -0.3);
+    return Math.pow(a - v * (a - b), -1 / 0.3);
+  }
+  const v = Math.random();
+  const a = Math.pow(0.5, -1.3), b = Math.pow(hiCut, -1.3);
+  return Math.pow(a - v * (a - b), -1 / 1.3);
+}
+
+/** Main-sequence lifetime in Myr: ~10 Gyr · (M/M☉)^-2.5 */
+export function mainSequenceLifetimeMyr(m) {
+  return 10000 * Math.pow(m, -2.5);
+}
+
+/**
+ * Stellar population entry: mass from IMF (capped so stars that would
+ * ALREADY have exploded/faded long before `ageMyr` aren't oversampled),
+ * birth time in Myr before t=0.
+ */
+function sampleStar(stellar, i, ageMinMyr, ageMaxMyr) {
+  const ageMyr = ageMinMyr + Math.random() * (ageMaxMyr - ageMinMyr);
+  stellar[i * 4] = kroupaIMF();
+  stellar[i * 4 + 1] = -ageMyr;           // birthTime in Myr (scaled later)
+  stellar[i * 4 + 2] = Math.random();     // per-star seed
+  stellar[i * 4 + 3] = 0;
 }
 
 /**
@@ -42,6 +89,7 @@ export function galaxyDisk(params) {
 
   const R = diskRadius;
   const data = new Float32Array(N * STRIDE);
+  const stellar = new Float32Array(N * 4);
   const DYMASS = 1.0;
 
   const nBulge = Math.floor(N * 0.20);
@@ -178,11 +226,11 @@ export function galaxyDisk(params) {
       vz = gaussRandom() * sZ;
     }
 
-    // colorMass: spectral class per population (Phase 3 replaces with IMF)
-    let colorMass;
-    if (c === 0)      colorMass = 0.1 + Math.pow(Math.random(), 2.5) * 0.55;  // K/M bulge
-    else if (c === 1) colorMass = 2.0 + Math.pow(Math.random(), 1.5) * 8.0;   // O/B arms
-    else              colorMass = 0.35 + Math.pow(Math.random(), 1.5) * 0.65; // G/K disk
+    // Stellar population: IMF mass + age. Bulge is ancient (8–12 Gyr),
+    // disk spans the galaxy's life, arms are newborn (O/B stars alive).
+    if (c === 0)      sampleStar(stellar, i, 8000, 12000);
+    else if (c === 1) sampleStar(stellar, i, 0, 50);
+    else              sampleStar(stellar, i, 0, 10000);
 
     data[base + 0] = x;
     data[base + 1] = y;
@@ -191,22 +239,24 @@ export function galaxyDisk(params) {
     data[base + 4] = vx;
     data[base + 5] = vy;
     data[base + 6] = vz;
-    data[base + 7] = colorMass;
+    data[base + 7] = 0;
   }
 
-  // ── particle 0: supermassive central mass ─────────────────────────────────
+  // ── particle 0: supermassive central mass (black hole — stellarMass 0) ────
   data[0] = 0; data[1] = 0; data[2] = 0;
   data[3] = centralMass;
   data[4] = 0; data[5] = 0; data[6] = 0;
   data[7] = 0;
+  stellar[0] = 0; stellar[1] = 0; stellar[2] = 0; stellar[3] = 0;
 
-  return data;
+  return { data, stellar };
 }
 
 export function uniformSphere(params) {
   const { N = 5000, diskRadius = 30.0, starMass = 1.0 } = params;
   const radius = diskRadius;
   const data = new Float32Array(N * STRIDE);
+  const stellar = new Float32Array(N * 4);
   for (let i = 0; i < N; i++) {
     const base = i * STRIDE;
     let x, y, z;
@@ -219,10 +269,10 @@ export function uniformSphere(params) {
     data[base + 1] = y;
     data[base + 2] = z;
     data[base + 3] = starMass;
-    data[base + 7] = 0.35 + Math.pow(Math.random(), 1.5) * 0.65;
+    sampleStar(stellar, i, 0, 5000);
     // zero velocity (indices 4-6 default to 0)
   }
-  return data;
+  return { data, stellar };
 }
 
 export function twoGalaxyCollision(params) {
@@ -243,10 +293,14 @@ export function twoGalaxyCollision(params) {
   const paramsA = { N: halfN, diskRadius, diskHeight, centralMass, toomreQ, G, haloMass: 0 };
   const paramsB = { ...paramsA, N: N - halfN };
 
-  const diskA = galaxyDisk(paramsA);
-  const diskB = galaxyDisk(paramsB);
+  const A = galaxyDisk(paramsA);
+  const B = galaxyDisk(paramsB);
+  const diskA = A.data, diskB = B.data;
 
   const data = new Float32Array(N * STRIDE);
+  const stellar = new Float32Array(N * 4);
+  stellar.set(A.stellar.subarray(0, halfN * 4), 0);
+  stellar.set(B.stellar.subarray(0, (N - halfN) * 4), halfN * 4);
 
   // Galaxy A: offset -separation/2 along x, moving +x
   for (let i = 0; i < halfN; i++) {
@@ -259,7 +313,6 @@ export function twoGalaxyCollision(params) {
     data[dst + 4] = diskA[src + 4] + approachVel;
     data[dst + 5] = diskA[src + 5];
     data[dst + 6] = diskA[src + 6];
-    data[dst + 7] = diskA[src + 7];  // preserve spectral colorMass
   }
 
   // Galaxy B: offset +separation/2 along x, tilted 30°, moving -x
@@ -278,8 +331,7 @@ export function twoGalaxyCollision(params) {
     data[dst + 4] = diskB[src + 4] - approachVel;
     data[dst + 5] = diskB[src + 5];
     data[dst + 6] = diskB[src + 6];
-    data[dst + 7] = diskB[src + 7];  // preserve spectral colorMass
   }
 
-  return data;
+  return { data, stellar };
 }

@@ -12,15 +12,16 @@ export async function requestGPUDevice() {
 }
 
 export class NBodyGPU {
-  constructor(device, particleData) {
+  constructor(device, particleData, stellarData) {
     this.device = device;
     this.N = particleData.length / 8;
-    this.currentBuffer = 0; // ping-pong index
+    this.currentBuffer = 0;  // particle ping-pong index (flips every step)
+    this.stellarCurrent = 0; // stellar ping-pong index (flips on permutation only)
     this.ready = false;
-    this.initPromise = this._init(particleData);
+    this.initPromise = this._init(particleData, stellarData);
   }
 
-  async _init(particleData) {
+  async _init(particleData, stellarData) {
     const device = this.device;
     const byteSize = particleData.byteLength;
 
@@ -72,6 +73,15 @@ export class NBodyGPU {
       throw new Error('nbody_bh.wgsl: ' + errors.map(m => `${m.lineNum}:${m.linePos} ${m.message}`).join('\n'));
     }
 
+    // Stellar state ping-pong: [stellarMass, birthTimeMyr, seed, 0] per star.
+    // Read by the render shader; only rewritten when particles are reordered.
+    this.stellarBuffers = [0, 1].map(() => device.createBuffer({
+      size: this.N * 16,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    }));
+    device.queue.writeBuffer(this.stellarBuffers[0], 0, stellarData);
+    device.queue.writeBuffer(this.stellarBuffers[1], 0, stellarData);
+
     // Morton permutation buffer (u32 per particle)
     this.permBuffer = device.createBuffer({
       size: this.N * 4,
@@ -100,6 +110,29 @@ export class NBodyGPU {
     this.permPipeline = device.createComputePipeline({
       layout, compute: { module: shader, entryPoint: 'apply_permutation' },
     });
+
+    // Stellar gather: own layout (stellarIn, stellarOut, params, perm)
+    this.stellarPermLayout = device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+        { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+        { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+      ],
+    });
+    this.stellarPermPipeline = device.createComputePipeline({
+      layout: device.createPipelineLayout({ bindGroupLayouts: [this.stellarPermLayout] }),
+      compute: { module: shader, entryPoint: 'apply_permutation_stellar' },
+    });
+    this.stellarPermBindGroups = [0, 1].map(i => device.createBindGroup({
+      layout: this.stellarPermLayout,
+      entries: [
+        { binding: 0, resource: { buffer: this.stellarBuffers[i] } },
+        { binding: 1, resource: { buffer: this.stellarBuffers[i ^ 1] } },
+        { binding: 2, resource: { buffer: this.paramsBuffer } },
+        { binding: 3, resource: { buffer: this.permBuffer } },
+      ],
+    }));
 
     // Per-step COM refresh: separate layout (bhBuffer is read_write here;
     // it must not also be bound read-only in the same dispatch scope).
@@ -164,8 +197,17 @@ export class NBodyGPU {
     pass.setPipeline(this.permPipeline);
     pass.setBindGroup(0, this.bindGroups[this.currentBuffer]);
     pass.dispatchWorkgroups(Math.ceil(this.N / 256));
+    pass.setPipeline(this.stellarPermPipeline);
+    pass.setBindGroup(0, this.stellarPermBindGroups[this.stellarCurrent]);
+    pass.dispatchWorkgroups(Math.ceil(this.N / 256));
     pass.end();
     this.currentBuffer ^= 1;
+    this.stellarCurrent ^= 1;
+  }
+
+  /** Stellar-state buffer matching the current particle ordering */
+  get stellarBuffer() {
+    return this.stellarBuffers[this.stellarCurrent];
   }
 
   updateCentralMass(mass, idx = 0) {
@@ -262,9 +304,12 @@ export class NBodyGPU {
 
   destroy() {
     this.buffers?.forEach(b => b.destroy());
+    this.stellarBuffers?.forEach(b => b.destroy());
     this.paramsBuffer?.destroy();
     this.bhBuffer?.destroy();
     this.posCompactBuffer?.destroy();
     this.posStagingBuffer?.destroy();
+    this.permBuffer?.destroy();
+    this.refreshUniform?.destroy();
   }
 }

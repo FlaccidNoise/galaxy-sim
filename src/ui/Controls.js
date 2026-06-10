@@ -32,6 +32,7 @@ export class Controls {
       haloScale: 1.2,    // halo scale radius as multiple of disk radius
       // Display
       colorMode: 'Spectral',
+      agingRate: 25.0,   // Myr of stellar aging per sim time unit (0 = frozen)
       exposureEV: 0.0,
       bloomStrength: 0.35,
       starIntensity: 1.0,
@@ -83,6 +84,8 @@ export class Controls {
     const dispFolder = gui.addFolder('Display');
     dispFolder.add(this.state, 'colorMode', Object.keys(COLOR_MODES)).name('Color Mode')
       .onChange(v => { r.colorMode = COLOR_MODES[v]; });
+    dispFolder.add(this.state, 'agingRate', 0, 200, 1).name('Aging (Myr/t)')
+      .onChange(v => { r.agingRate = v; });
     dispFolder.add(this.state, 'exposureEV', -4, 4, 0.1).name('Exposure (EV)')
       .onChange(v => { r.exposure = Math.pow(2, v); });
     dispFolder.add(this.state, 'bloomStrength', 0, 1.5, 0.01).name('Bloom')

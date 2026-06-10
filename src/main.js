@@ -54,7 +54,7 @@ async function init(params) {
     haloA: params.haloScale * params.diskRadius,
   };
 
-  const particleData = presetFns[params.preset](icParams);
+  const { data: particleData, stellar: stellarData } = presetFns[params.preset](icParams);
   const N = particleData.length / 8;
 
   // Init renderer, camera, GPU device on first call only
@@ -84,11 +84,11 @@ async function init(params) {
 
   // Morton-sort the ICs on the CPU so the GPU starts in Z-curve order, and
   // build the frame-0 tree from the same sorted snapshot.
-  const boot = sortAndBuild(particleData, N);
+  const boot = sortAndBuild(particleData, stellarData, N);
   centralIdx = boot.centralIdx;
 
   setLoadingStatus('Building compute pipeline…');
-  const newSim = new NBodyGPU(gpuDevice, boot.sorted);
+  const newSim = new NBodyGPU(gpuDevice, boot.sorted, boot.sortedStellar);
   await newSim.initPromise;
   newSim.uploadBHTree(boot.tree._buf, boot.tree.numNodes, boot.tree.levelRanges);
 
@@ -139,7 +139,7 @@ function loop() {
   if (!sim || !sim.ready || controls?.state.paused) {
     if (renderer && sim?.ready) {
       const enc = gpuDevice.createCommandEncoder();
-      renderer.encode(enc, camera, sim.positionBuffer, sim.N, simTime);
+      renderer.encode(enc, camera, sim.positionBuffer, sim.stellarBuffer, sim.N, simTime);
       gpuDevice.queue.submit([enc.finish()]);
     }
     return;
@@ -186,7 +186,7 @@ function loop() {
     }
   }
 
-  renderer.encode(enc, camera, sim.positionBuffer, sim.N, simTime);
+  renderer.encode(enc, camera, sim.positionBuffer, sim.stellarBuffer, sim.N, simTime);
   gpuDevice.queue.submit([enc.finish()]);
 
   if (readbackInFlight && !workerBusy && posTransfer) {
