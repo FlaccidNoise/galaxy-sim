@@ -277,6 +277,11 @@ export class RendererGPU {
       new Float32Array([this.exposure, this.bloomStrength, 0, 0]));
   }
 
+  /** Drop cached bind groups (call when the sim's buffers are replaced). */
+  clearSceneCache() {
+    this._sceneBindGroups.clear();
+  }
+
   /** Encode the full frame into the given command encoder. */
   encode(encoder, camera, particleBuffer, stellarBuffer, particleCount, time) {
     this._writeUniforms(camera, time);

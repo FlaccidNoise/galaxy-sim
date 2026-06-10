@@ -84,7 +84,7 @@ async function init(params) {
   }
 
   // Tear down previous sim + worker state
-  if (sim) { const old = sim; sim = null; old.destroy(); }
+  if (sim) { const old = sim; sim = null; old.destroy(); renderer?.clearSceneCache(); }
   if (treeWorker) { treeWorker.terminate(); treeWorker = null; }
   readbackInFlight = false;
   workerBusy = false;

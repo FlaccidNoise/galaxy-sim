@@ -322,16 +322,15 @@ export function twoGalaxyCollision(params) {
 
   // Galaxy A: offset -separation/2 along x, moving +x
   for (let i = 0; i < halfN; i++) {
-    const src = i * STRIDE;
-    const dst = i * STRIDE;
-    data[dst + 0] = diskA[src + 0] - separation / 2;
-    data[dst + 1] = diskA[src + 1];
-    data[dst + 2] = diskA[src + 2];
-    data[dst + 3] = diskA[src + 3];
-    data[dst + 4] = diskA[src + 4] + approachVel;
-    data[dst + 5] = diskA[src + 5];
-    data[dst + 6] = diskA[src + 6];
-    data[dst + 7] = diskA[src + 7];   // gas flag
+    const b = i * STRIDE;
+    data[b + 0] = diskA[b + 0] - separation / 2;
+    data[b + 1] = diskA[b + 1];
+    data[b + 2] = diskA[b + 2];
+    data[b + 3] = diskA[b + 3];
+    data[b + 4] = diskA[b + 4] + approachVel;
+    data[b + 5] = diskA[b + 5];
+    data[b + 6] = diskA[b + 6];
+    data[b + 7] = diskA[b + 7];   // gas flag
   }
 
   // Galaxy B: offset +separation/2 along x, tilted 30°, moving -x
