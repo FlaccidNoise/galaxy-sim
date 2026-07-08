@@ -28,6 +28,7 @@ export function pickCandidates(positions, N, viewProj, clickX, clickY, width, he
 
 /** Read the 16-byte stellar records for the given particle indices. */
 export async function readStellarRecords(device, stellarBuffer, indices) {
+  if (indices.length === 0) return new Float32Array(0);
   const staging = device.createBuffer({
     size: Math.max(indices.length * 16, 16),
     usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
