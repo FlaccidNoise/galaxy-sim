@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - No build step. Static ES modules; bare imports resolve only through the import map in `index.html`. No new runtime dependencies.
-- Unit tests use Node's built-in runner: `node --test test/` (Node ≥ 18). No test framework installs.
+- Unit tests use Node's built-in runner: `node --test` (Node ≥ 18). No test framework installs.
 - Do NOT modify `src/physics/shaders/nbody_bh.wgsl`, `src/physics/mortonTree.js`, or `src/physics/bhWorker.js`.
 - The galaxy scene pass stays depth-free. Only the new system pass owns a depth attachment.
 - The galaxy renderer's uniform buffer stays 176 bytes — new fields use the existing `_q0`/`_q1` spare slots (float indices 41/42).
@@ -120,7 +120,7 @@ test('spectral classes', () => {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `node --test test/`
+Run: `node --test`
 Expected: FAIL — `Cannot find module .../src/system/SystemGen.js`
 
 - [ ] **Step 3: Implement SystemGen**
@@ -245,7 +245,7 @@ export function generateSystem(stellarMass, birthTime, seed) {
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `node --test test/`
+Run: `node --test`
 Expected: all tests PASS
 
 - [ ] **Step 5: Commit**
@@ -317,7 +317,7 @@ test('pickCandidates caps results at k', () => {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `node --test test/`
+Run: `node --test`
 Expected: FAIL — `Cannot find module .../src/ui/StarSelection.js`
 
 - [ ] **Step 3: Implement the module**
@@ -382,7 +382,7 @@ In `src/physics/NBodyGPU.js` (currently lines 85-88), change:
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `node --test test/`
+Run: `node --test`
 Expected: all tests PASS
 
 - [ ] **Step 6: Commit**
@@ -480,7 +480,7 @@ export function makeViewProj(out, eye, r, u, f, fovY, aspect, near, far) {
 - [ ] **Step 4: Verify no regression**
 
 Run: `npm start`, open the served URL in Chrome.
-Expected: galaxy renders and orbits exactly as before — rotate, pan, wheel zoom (still clamps at radius 2), presets restart. Also `node --test test/` still passes.
+Expected: galaxy renders and orbits exactly as before — rotate, pan, wheel zoom (still clamps at radius 2), presets restart. Also `node --test` still passes.
 
 - [ ] **Step 5: Commit**
 
@@ -823,7 +823,7 @@ Run: `npm start`, open in Chrome:
 - Collision preset: click each galaxy's bright center → BH never selects.
 - Determinism: `await __select(3000); s1 = JSON.stringify(__system); await __select(3000); JSON.stringify(__system) === s1` → `true`.
 - Restart (Reset button) → selection cleared.
-- `node --test test/` still passes.
+- `node --test` still passes.
 
 - [ ] **Step 10: Commit**
 
@@ -1637,7 +1637,7 @@ git commit -m "feat: star info chip; README solar-system zoom section"
 
 - [ ] **Step 1: Unit tests**
 
-Run: `node --test test/`
+Run: `node --test`
 Expected: all PASS.
 
 - [ ] **Step 2: Full browser pass**
