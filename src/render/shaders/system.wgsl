@@ -179,7 +179,8 @@ fn fs_body(in : BodyVSOut) -> BodyFSOut {
     let cq = dot(oc, oc) - in.radius * in.radius;
     let disc = bq * bq - cq;
     if (disc < 0.0) { discard; }
-    let thit = -bq - sqrt(disc);
+    var thit = -bq - sqrt(disc);
+    if (thit < 0.0) { thit = -bq + sqrt(disc); }   // camera inside the sphere: far root
     if (thit < 0.0) { discard; }
     let hit = ro + rd * thit;
     let n = normalize(hit - in.center);
