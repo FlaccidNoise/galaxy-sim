@@ -321,7 +321,7 @@ export class RendererGPU {
   }
 
   /** Encode the full frame into the given command encoder. */
-  encode(encoder, camera, particleBuffer, stellarBuffer, particleCount, time) {
+  encode(encoder, camera, particleBuffer, stellarBuffer, particleCount, time, systemScene = null) {
     this._writeUniforms(camera, time);
 
     // 1. Scene: background + particles into HDR target
@@ -358,6 +358,10 @@ export class RendererGPU {
       }
       pass.end();
     }
+
+    // 1.5 System scene (selected star's solar system) — into the same HDR
+    // target so it shares bloom + AgX
+    systemScene?.encode(encoder, this.sceneView, this.width, this.height);
 
     // 2. Bloom downsample chain
     for (let i = 0; i < this.bloomLevels; i++) {

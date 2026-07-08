@@ -6,6 +6,7 @@ import { Controls } from './ui/Controls.js';
 import { sortAndBuild } from './physics/mortonTree.js';
 import { pickCandidates, readStellarRecords } from './ui/StarSelection.js';
 import { generateSystem } from './system/SystemGen.js';
+import { SystemRenderer } from './render/SystemRenderer.js';
 
 let renderer, camera, sim, controls, gpuDevice;
 let treeWorker = null;
@@ -24,6 +25,9 @@ let energyBaseline = null;     // first total-energy reading after restart
 let energyDrift = 0;
 let stepAccumulator = 0;
 let simTime = 0;
+let systemRenderer = null;
+const R_ENTER = 1.5;   // galaxy-camera radius where the system starts fading in
+const R_FULL = 0.8;    // fully faded in
 
 // FPS counter — element is declared in index.html
 let frameCount = 0, lastFPSTime = performance.now();
@@ -52,6 +56,7 @@ function select(idx, record) {
   renderer.selectedIdx = idx;
   camera.setMinRadius(0.02);
   window.__system = selection.system;
+  systemRenderer.setSystem(selection.system);
   updateStarInfo();
 }
 
@@ -60,6 +65,7 @@ function deselect() {
   selection = null;
   renderer.selectedIdx = 0xffffffff;
   renderer.systemFade = 0;
+  systemRenderer?.setSystem(null);
   camera.setMinRadius(2);
   if (camera._goal.radius < 2.5) camera._goal.radius = 2.5;
   window.__system = null;
@@ -139,6 +145,7 @@ async function init(params) {
 
     setLoadingStatus('Building render pipeline…');
     renderer = await new RendererGPU(gpuDevice, canvas).init();
+    systemRenderer = await new SystemRenderer(gpuDevice).init();
   }
 
   // Tear down previous sim + worker state
@@ -239,10 +246,26 @@ function loop() {
   }
   camera.update();
 
+  // Solar-system crossfade: below R_ENTER the system scene fades in and the
+  // galaxy backdrop pins at R_ENTER so neighboring sprites don't fly past.
+  let systemScene = null;
+  let galaxyCam = camera;
+  if (selection) {
+    const t = Math.min(Math.max((R_ENTER - camera.radius) / (R_ENTER - R_FULL), 0), 1);
+    const fade = t * t * (3 - 2 * t);
+    renderer.systemFade = fade;
+    if (fade > 0) {
+      const rSys = 0.5 * Math.pow(camera.radius / 0.02, 1.27);   // 0.02→0.5, 1.5→~120
+      systemRenderer.updateCamera(camera, rSys, fade, simTime);
+      systemScene = systemRenderer;
+      if (camera.radius < R_ENTER) galaxyCam = camera.viewFrom(R_ENTER);
+    }
+  }
+
   if (!sim || !sim.ready || controls?.state.paused) {
     if (renderer && sim?.ready) {
       const enc = gpuDevice.createCommandEncoder();
-      renderer.encode(enc, camera, sim.positionBuffer, sim.stellarBuffer, sim.N, simTime);
+      renderer.encode(enc, galaxyCam, sim.positionBuffer, sim.stellarBuffer, sim.N, simTime, systemScene);
       gpuDevice.queue.submit([enc.finish()]);
     }
     return;
@@ -330,7 +353,7 @@ function loop() {
     }
   }
 
-  renderer.encode(enc, camera, sim.positionBuffer, sim.stellarBuffer, sim.N, simTime);
+  renderer.encode(enc, galaxyCam, sim.positionBuffer, sim.stellarBuffer, sim.N, simTime, systemScene);
   gpuDevice.queue.submit([enc.finish()]);
 
   if (readbackInFlight && !workerBusy && posTransfer) {
