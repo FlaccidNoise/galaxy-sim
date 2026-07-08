@@ -68,11 +68,13 @@ function deselect() {
 
 async function handlePick(x, y) {
   if (!sim?.ready || !lastPositions) return;
+  const mySim = sim;
   const dpr = devicePixelRatio || 1;
   const cands = pickCandidates(lastPositions, sim.N, camera.viewProj,
                                x * dpr, y * dpr, renderer.width, renderer.height);
   if (!cands.length) { deselect(); return; }
   const records = await readStellarRecords(gpuDevice, sim.stellarBuffer, cands.map(c => c.idx));
+  if (sim !== mySim) return;
   for (let i = 0; i < cands.length; i++) {
     if (records[i * 4] <= 0) continue;   // gas (−1) and central BHs (0) unpickable
     select(cands[i].idx, records.subarray(i * 4, i * 4 + 4));
@@ -196,7 +198,9 @@ async function init(params) {
     return init(controls.state).catch(fail);
   };
   window.__select = async idx => {
+    const mySim = sim;
     const rec = await readStellarRecords(gpuDevice, sim.stellarBuffer, [idx]);
+    if (sim !== mySim) return;
     select(idx, rec.subarray(0, 4));
   };
 
