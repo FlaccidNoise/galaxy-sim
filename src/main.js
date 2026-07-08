@@ -4,6 +4,8 @@ import { NBodyGPU, requestGPUDevice } from './physics/NBodyGPU.js';
 import { galaxyDisk, uniformSphere, twoGalaxyCollision } from './physics/InitialConditions.js';
 import { Controls } from './ui/Controls.js';
 import { sortAndBuild } from './physics/mortonTree.js';
+import { pickCandidates, readStellarRecords } from './ui/StarSelection.js';
+import { generateSystem } from './system/SystemGen.js';
 
 let renderer, camera, sim, controls, gpuDevice;
 let treeWorker = null;
@@ -12,6 +14,8 @@ let readbackInFlight = false;  // GPU staging map pending
 let workerBusy = false;        // tree build in progress
 let pendingTree = null;        // {tree, numNodes, perm, centralIdx, …} awaiting GPU application
 let centralIdx = 0;            // current index of galaxy A's central particle
+let lastPositions = null;   // retained CPU snapshot (vec4/particle) for picking
+let selection = null;       // { idx, record: Float32Array(4), system }
 let centralIdx2 = -1;          // galaxy B's central (Collision preset), -1 = none
 let haloPerGalaxy = 0;         // halo mass per halo for this preset (0 = off)
 let haloCenters = [];          // SMOOTHED galaxy centres (EMA of BH positions)
@@ -35,6 +39,46 @@ function fail(err) {
   setLoadingStatus(`Error: ${err.message ?? err}`);
   const spinner = document.querySelector('.loading-spinner');
   if (spinner) spinner.style.display = 'none';
+}
+
+function updateStarInfo() {}   // filled in by the UI task
+
+function select(idx, record) {
+  selection = {
+    idx,
+    record: Float32Array.from(record),
+    system: generateSystem(record[0], record[1], record[2]),
+  };
+  renderer.selectedIdx = idx;
+  camera.setMinRadius(0.02);
+  window.__system = selection.system;
+  updateStarInfo();
+}
+
+function deselect() {
+  if (!selection) return;
+  selection = null;
+  renderer.selectedIdx = 0xffffffff;
+  renderer.systemFade = 0;
+  camera.setMinRadius(2);
+  if (camera._goal.radius < 2.5) camera._goal.radius = 2.5;
+  window.__system = null;
+  updateStarInfo();
+}
+
+async function handlePick(x, y) {
+  if (!sim?.ready || !lastPositions) return;
+  const dpr = devicePixelRatio || 1;
+  const cands = pickCandidates(lastPositions, sim.N, camera.viewProj,
+                               x * dpr, y * dpr, renderer.width, renderer.height);
+  if (!cands.length) { deselect(); return; }
+  const records = await readStellarRecords(gpuDevice, sim.stellarBuffer, cands.map(c => c.idx));
+  for (let i = 0; i < cands.length; i++) {
+    if (records[i * 4] <= 0) continue;   // gas (−1) and central BHs (0) unpickable
+    select(cands[i].idx, records.subarray(i * 4, i * 4 + 4));
+    return;
+  }
+  deselect();
 }
 
 async function init(params) {
@@ -79,11 +123,24 @@ async function init(params) {
     (document.getElementById('sim') ?? document.body).appendChild(canvas);
 
     camera = new Camera(canvas);
+
+    let downX = 0, downY = 0;
+    canvas.addEventListener('pointerdown', e => { downX = e.clientX; downY = e.clientY; });
+    canvas.addEventListener('pointerup', e => {
+      // Click = left button released within 4 px of where it went down
+      if (e.button !== 0 || Math.hypot(e.clientX - downX, e.clientY - downY) > 4) return;
+      handlePick(e.clientX, e.clientY).catch(console.error);
+    });
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') deselect();
+    });
+
     setLoadingStatus('Building render pipeline…');
     renderer = await new RendererGPU(gpuDevice, canvas).init();
   }
 
   // Tear down previous sim + worker state
+  deselect();
   if (sim) { const old = sim; sim = null; old.destroy(); renderer?.clearSceneCache(); }
   if (treeWorker) { treeWorker.terminate(); treeWorker = null; }
   readbackInFlight = false;
@@ -138,6 +195,10 @@ async function init(params) {
     Object.assign(controls.state, over);
     return init(controls.state).catch(fail);
   };
+  window.__select = async idx => {
+    const rec = await readStellarRecords(gpuDevice, sim.stellarBuffer, [idx]);
+    select(idx, rec.subarray(0, 4));
+  };
 
   // Init controls on first call only
   if (!controls) {
@@ -165,6 +226,12 @@ function loop() {
     lastFPSTime = now;
   }
 
+  if (selection && lastPositions) {
+    const i = selection.idx * 4;
+    camera._goal.target[0] = lastPositions[i];
+    camera._goal.target[1] = lastPositions[i + 1];
+    camera._goal.target[2] = lastPositions[i + 2];
+  }
   camera.update();
 
   if (!sim || !sim.ready || controls?.state.paused) {
@@ -206,6 +273,17 @@ function loop() {
     centralIdx = pendingTree.centralIdx;
     centralIdx2 = pendingTree.centralIdx2 ?? -1;
     renderer.centralIdx = centralIdx;
+    // Permutation is a gather (out[i] = in[perm[i]]): old index → the new
+    // slot that references it.
+    if (selection) {
+      const perm = pendingTree.perm;
+      let ni = -1;
+      for (let i = 0; i < perm.length; i++) {
+        if (perm[i] === selection.idx) { ni = i; break; }
+      }
+      if (ni >= 0) { selection.idx = ni; renderer.selectedIdx = ni; }
+      else deselect();
+    }
     // Drift the halo centres toward the BH positions (EMA: follows the
     // galaxy's orbit, ignores the BH's encounter jitter)
     const k = 0.1;
@@ -256,6 +334,10 @@ function loop() {
     sim.readPositions(posTransfer).then(() => {
       readbackInFlight = false;
       if (sim !== mySim || !treeWorker) { workerBusy = false; return; }
+      if (!lastPositions || lastPositions.length !== posTransfer.length) {
+        lastPositions = new Float32Array(posTransfer.length);
+      }
+      lastPositions.set(posTransfer);
       treeWorker.postMessage({ type: 'build', positions: posTransfer }, [posTransfer.buffer]);
       posTransfer = null;  // owned by worker until it returns
     }).catch(() => { readbackInFlight = false; workerBusy = false; });
