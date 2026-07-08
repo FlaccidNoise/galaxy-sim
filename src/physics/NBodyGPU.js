@@ -84,7 +84,7 @@ export class NBodyGPU {
     // Read by the render shader; only rewritten when particles are reordered.
     this.stellarBuffers = [0, 1].map(() => device.createBuffer({
       size: this.N * 16,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
     }));
     device.queue.writeBuffer(this.stellarBuffers[0], 0, stellarData);
     device.queue.writeBuffer(this.stellarBuffers[1], 0, stellarData);
