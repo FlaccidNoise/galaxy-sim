@@ -143,6 +143,7 @@ async function init(params) {
 
   // Tear down previous sim + worker state
   deselect();
+  lastPositions = null;
   if (sim) { const old = sim; sim = null; old.destroy(); renderer?.clearSceneCache(); }
   if (treeWorker) { treeWorker.terminate(); treeWorker = null; }
   readbackInFlight = false;
