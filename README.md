@@ -28,6 +28,12 @@ Requires a WebGPU browser (Chrome 113+, Safari 26+).
 - **Stellar lifecycle**: Kroupa IMF masses; blackbody (Planckian-locus)
   colors; main sequence → red giant → supernova / white dwarf — derived
   statelessly in the render shader from mass + birth time.
+- **Solar-system zoom** — click any star to select it, then keep zooming in:
+  below a threshold the view crossfades into that star's procedurally
+  generated solar system (planets, moons, rings, asteroid belt), deterministic
+  per star and rendered as ray-traced impostor spheres in a local AU-scale
+  scene while the live galaxy stays behind as backdrop. Esc (or zooming out)
+  returns to the galaxy.
 
 ## Rendering
 

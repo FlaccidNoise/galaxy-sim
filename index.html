@@ -161,6 +161,32 @@
     }
 
     /* ══════════════════════════════════════════════════
+       Star Info Chip (bottom-left)
+       ══════════════════════════════════════════════════ */
+    #star-info {
+      position: fixed;
+      left: 16px;
+      bottom: 16px;
+      z-index: 100;
+      padding: 10px 14px;
+      background: var(--clr-panel);
+      border-radius: 8px;
+      box-shadow: var(--shadow-panel);
+      color: var(--clr-star);
+      font-size: 0.72rem;
+      line-height: 1.6;
+      opacity: 0;
+      transition: opacity 0.3s var(--ease);
+      pointer-events: none;
+    }
+    #star-info.visible { opacity: 1; }
+    #star-info .cls {
+      color: var(--clr-accent);
+      font-family: 'Orbitron', sans-serif;
+      letter-spacing: 0.08em;
+    }
+
+    /* ══════════════════════════════════════════════════
        Controls Hint (bottom-right, fades after 6s)
        ══════════════════════════════════════════════════ */
     #controls-hint {
@@ -325,6 +351,7 @@
   </div>
 
   <div id="fps" aria-live="off" aria-atomic="true"></div>
+  <div id="star-info" aria-live="polite"></div>
 
   <div id="controls-hint" aria-hidden="true">
     Drag &nbsp;&middot;&nbsp; Rotate<br>

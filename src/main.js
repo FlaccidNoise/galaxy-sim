@@ -45,7 +45,19 @@ function fail(err) {
   if (spinner) spinner.style.display = 'none';
 }
 
-function updateStarInfo() {}   // filled in by the UI task
+function updateStarInfo() {
+  const el = document.getElementById('star-info');
+  if (!el) return;
+  if (!selection) { el.classList.remove('visible'); return; }
+  const { star, planets, belt } = selection.system;
+  const what = planets.length
+    ? `${planets.length} planet${planets.length > 1 ? 's' : ''}`
+    : 'barren system';
+  el.innerHTML =
+    `<span class="cls">CLASS ${star.class}</span> · ${star.mass.toFixed(2)} M☉ · ${Math.round(star.tempK).toLocaleString()} K<br>` +
+    `${what}${belt ? ' · asteroid belt' : ''} — scroll in to visit · Esc to release`;
+  el.classList.add('visible');
+}
 
 function select(idx, record) {
   selection = {
