@@ -30,6 +30,7 @@ export class RendererGPU {
     this.systemFade = 0;
 
     this._sceneBindGroups = new Map(); // pipeline → particleBuffer → stellarBuffer → bind group
+    this._hlBindGroups = new Map();    // particleBuffer → bind group
   }
 
   async init() {
@@ -276,17 +277,18 @@ export class RendererGPU {
   }
 
   _highlightBindGroup(buffer) {
-    if (this._hlBuffer !== buffer) {
-      this._hlBG = this.device.createBindGroup({
+    let bg = this._hlBindGroups.get(buffer);
+    if (!bg) {
+      bg = this.device.createBindGroup({
         layout: this.highlightPipeline.getBindGroupLayout(0),
         entries: [
           { binding: 0, resource: { buffer } },
           { binding: 1, resource: { buffer: this.uniformBuffer } },
         ],
       });
-      this._hlBuffer = buffer;
+      this._hlBindGroups.set(buffer, bg);
     }
-    return this._hlBG;
+    return bg;
   }
 
   _writeUniforms(camera, time) {
@@ -315,7 +317,7 @@ export class RendererGPU {
   /** Drop cached bind groups (call when the sim's buffers are replaced). */
   clearSceneCache() {
     this._sceneBindGroups.clear();
-    this._hlBuffer = null;
+    this._hlBindGroups.clear();
   }
 
   /** Encode the full frame into the given command encoder. */
