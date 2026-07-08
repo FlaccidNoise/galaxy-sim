@@ -209,3 +209,85 @@ fn fs_body(in : BodyVSOut) -> BodyFSOut {
     out.color = vec4f(col * su.fade, su.fade);   // premultiplied crossfade
     return out;
 }
+
+// ── Planetary rings: flat annulus in the orbital plane ─────────────────────
+struct RingVSOut {
+    @builtin(position) pos : vec4f,
+    @location(0) local : vec2f,
+    @location(1) @interpolate(flat) inner : f32,
+    @location(2) @interpolate(flat) outer : f32,
+    @location(3) @interpolate(flat) seed : f32,
+}
+
+@vertex
+fn vs_ring(@builtin(vertex_index) vi : u32,
+           @builtin(instance_index) ii : u32) -> RingVSOut {
+    let rg = rings[ii];
+    let c = orbitPos(rg.orbit.x, rg.orbit.y, rg.orbit.z);
+    let local = QUAD[vi] * rg.size.y;
+    var out : RingVSOut;
+    out.pos = su.viewProj * vec4f(c + vec3f(local, 0.0), 1.0);
+    out.local = local;
+    out.inner = rg.size.x;
+    out.outer = rg.size.y;
+    out.seed = rg.orbit.w;
+    return out;
+}
+
+@fragment
+fn fs_ring(in : RingVSOut) -> @location(0) vec4f {
+    let rad = length(in.local);
+    if (rad < in.inner || rad > in.outer) { discard; }
+    let t = (rad - in.inner) / (in.outer - in.inner);
+    let bands = 0.35 + 0.65 * vnoise(vec3f(t * 24.0, in.seed * 97.0, 0.0));
+    let edge = smoothstep(0.0, 0.06, t) * smoothstep(1.0, 0.94, t);
+    let a = bands * edge * 0.55 * su.fade;
+    return vec4f(vec3f(0.75, 0.68, 0.58) * a, a);
+}
+
+// ── Asteroid belt: instanced Keplerian point sprites ────────────────────────
+struct BeltVSOut {
+    @builtin(position) pos : vec4f,
+    @location(0) quadUV : vec2f,
+    @location(1) @interpolate(flat) bright : f32,
+}
+
+@vertex
+fn vs_belt(@builtin(vertex_index) vi : u32,
+           @builtin(instance_index) ii : u32) -> BeltVSOut {
+    let d0 = belt[ii * 2u];        // a, phase, rate, size
+    let d1 = belt[ii * 2u + 1u];   // incl, node, bright, _
+    let ang = d0.y + d0.z * su.time;
+    let p = vec3f(cos(ang) * d0.x, sin(ang) * d0.x, sin(ang + d1.y) * d0.x * d1.x);
+    var clip = su.viewProj * vec4f(p, 1.0);
+    let corner = QUAD[vi];
+    let sizePx = 1.0 + d0.w * 1.5;
+    clip = vec4f(clip.xy + corner * (sizePx / su.resolution) * clip.w, clip.zw);
+    var out : BeltVSOut;
+    out.pos = clip;
+    out.quadUV = corner;
+    out.bright = d1.z;
+    return out;
+}
+
+@fragment
+fn fs_belt(in : BeltVSOut) -> @location(0) vec4f {
+    let d2 = dot(in.quadUV, in.quadUV);
+    if (d2 > 1.0) { discard; }
+    let a = exp(-d2 * 2.5) * in.bright * 0.5 * su.fade;
+    return vec4f(vec3f(0.70, 0.65, 0.55) * a, 1.0);
+}
+
+// ── Faint orbit guide lines ─────────────────────────────────────────────────
+@vertex
+fn vs_orbitline(@builtin(vertex_index) vi : u32,
+                @builtin(instance_index) ii : u32) -> @builtin(position) vec4f {
+    let a = orbitLines[ii].x;
+    let ang = f32(vi) / 128.0 * 6.2831853;
+    return su.viewProj * vec4f(cos(ang) * a, sin(ang) * a, 0.0, 1.0);
+}
+
+@fragment
+fn fs_orbitline() -> @location(0) vec4f {
+    return vec4f(vec3f(0.25, 0.40, 0.80) * 0.05 * su.fade, 1.0);
+}

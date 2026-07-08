@@ -58,6 +58,36 @@ export class SystemRenderer {
       primitive: { topology: 'triangle-list' },
       depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' },
     });
+    const additive = {
+      color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
+      alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
+    };
+    // Depth read-only: occluded by planets, but never self-sorting
+    const depthRead = { format: 'depth24plus', depthWriteEnabled: false, depthCompare: 'less' };
+    this.ringPipeline = device.createRenderPipeline({
+      label: 'sys-rings',
+      layout: this.pipelineLayout,
+      vertex: { module: this.module, entryPoint: 'vs_ring' },
+      fragment: { module: this.module, entryPoint: 'fs_ring', targets: [{ format: HDR, blend: premul }] },
+      primitive: { topology: 'triangle-list' },
+      depthStencil: depthRead,
+    });
+    this.beltPipeline = device.createRenderPipeline({
+      label: 'sys-belt',
+      layout: this.pipelineLayout,
+      vertex: { module: this.module, entryPoint: 'vs_belt' },
+      fragment: { module: this.module, entryPoint: 'fs_belt', targets: [{ format: HDR, blend: additive }] },
+      primitive: { topology: 'triangle-list' },
+      depthStencil: depthRead,
+    });
+    this.orbitPipeline = device.createRenderPipeline({
+      label: 'sys-orbits',
+      layout: this.pipelineLayout,
+      vertex: { module: this.module, entryPoint: 'vs_orbitline' },
+      fragment: { module: this.module, entryPoint: 'fs_orbitline', targets: [{ format: HDR, blend: additive }] },
+      primitive: { topology: 'line-strip' },
+      depthStencil: depthRead,
+    });
     return this;
   }
 
@@ -159,7 +189,8 @@ export class SystemRenderer {
     u.set(camera.right, 16); u[19] = time;
     u.set(camera.up, 20);    u[23] = fade;
     u.set(eye, 24);          u[27] = this.system?.star.tempK ?? 5778;
-    u[28] = this.width; u[29] = this.height;
+    u[28] = camera.canvas?.width ?? this.width;
+    u[29] = camera.canvas?.height ?? this.height;
     u[30] = Math.tan(camera.fovY / 2);
     this.device.queue.writeBuffer(this.uniformBuffer, 0, u);
   }
@@ -192,6 +223,18 @@ export class SystemRenderer {
     pass.setPipeline(this.bodyPipeline);
     pass.setBindGroup(0, this.bindGroup);
     pass.draw(6, this.numBodies);
+    if (this.numRings > 0) {
+      pass.setPipeline(this.ringPipeline);
+      pass.draw(6, this.numRings);
+    }
+    if (this.numBelt > 0) {
+      pass.setPipeline(this.beltPipeline);
+      pass.draw(6, this.numBelt);
+    }
+    if (this.numOrbits > 0) {
+      pass.setPipeline(this.orbitPipeline);
+      pass.draw(129, this.numOrbits);
+    }
     pass.end();
   }
 
