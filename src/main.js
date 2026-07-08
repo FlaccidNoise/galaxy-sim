@@ -88,8 +88,8 @@ function deselect() {
 }
 
 async function handlePick(x, y) {
-  if (renderer.systemFade > 0) return;   // inside a system: clicks are not picks
   if (!sim?.ready || !lastPositions) return;
+  if (renderer.systemFade > 0) return;   // inside a system: clicks are not picks
   const mySim = sim;
   const dpr = devicePixelRatio || 1;
   const cands = pickCandidates(lastPositions, sim.N, camera.viewProj,
