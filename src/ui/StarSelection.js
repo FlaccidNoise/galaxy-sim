@@ -26,6 +26,14 @@ export function pickCandidates(positions, N, viewProj, clickX, clickY, width, he
   return best;
 }
 
+/** Old index → new index after a gather permutation (out[i] = in[perm[i]]); −1 if absent. */
+export function remapIndex(perm, oldIdx) {
+  for (let i = 0; i < perm.length; i++) {
+    if (perm[i] === oldIdx) return i;
+  }
+  return -1;
+}
+
 /** Read the 16-byte stellar records for the given particle indices. */
 export async function readStellarRecords(device, stellarBuffer, indices) {
   if (indices.length === 0) return new Float32Array(0);

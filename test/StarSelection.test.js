@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pickCandidates } from '../src/ui/StarSelection.js';
+import { pickCandidates, remapIndex } from '../src/ui/StarSelection.js';
 
 // Identity viewProj: clip == position, w = 1 → NDC == xy
 const I = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
@@ -36,4 +36,12 @@ test('pickCandidates caps results at k', () => {
   const pos = new Float32Array(40);       // 10 particles all at NDC origin
   for (let i = 0; i < 10; i++) pos[i * 4 + 3] = 1;
   assert.equal(pickCandidates(pos, 10, I, 50, 50, 100, 100, 15, 4).length, 4);
+});
+
+test('remapIndex inverts a gather permutation', () => {
+  const perm = new Uint32Array([2, 0, 1]);   // out[0]=in[2], out[1]=in[0], out[2]=in[1]
+  assert.equal(remapIndex(perm, 2), 0);
+  assert.equal(remapIndex(perm, 0), 1);
+  assert.equal(remapIndex(perm, 1), 2);
+  assert.equal(remapIndex(perm, 7), -1);
 });

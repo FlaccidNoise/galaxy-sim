@@ -103,7 +103,12 @@ export class SystemRenderer {
     this.numRings = 0;
     this.numBelt = 0;
     this.numOrbits = 0;
-    if (!system) return;
+    if (!system) {
+      this.depthTex?.destroy();
+      this.depthTex = null;
+      this.depthView = null;
+      return;
+    }
 
     // Bodies: sun first, then planets, then moons (parent orbit inlined so
     // the shader computes moon centers without indirection).
@@ -236,12 +241,5 @@ export class SystemRenderer {
       pass.draw(129, this.numOrbits);
     }
     pass.end();
-  }
-
-  destroy() {
-    for (const b of ['bodyBuffer', 'ringBuffer', 'beltBuffer', 'orbitBuffer', 'uniformBuffer']) {
-      this[b]?.destroy();
-    }
-    this.depthTex?.destroy();
   }
 }

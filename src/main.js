@@ -4,7 +4,7 @@ import { NBodyGPU, requestGPUDevice } from './physics/NBodyGPU.js';
 import { galaxyDisk, uniformSphere, twoGalaxyCollision } from './physics/InitialConditions.js';
 import { Controls } from './ui/Controls.js';
 import { sortAndBuild } from './physics/mortonTree.js';
-import { pickCandidates, readStellarRecords } from './ui/StarSelection.js';
+import { pickCandidates, readStellarRecords, remapIndex } from './ui/StarSelection.js';
 import { generateSystem } from './system/SystemGen.js';
 import { SystemRenderer } from './render/SystemRenderer.js';
 
@@ -16,7 +16,10 @@ let workerBusy = false;        // tree build in progress
 let pendingTree = null;        // {tree, numNodes, perm, centralIdx, …} awaiting GPU application
 let centralIdx = 0;            // current index of galaxy A's central particle
 let lastPositions = null;   // retained CPU snapshot (vec4/particle) for picking
-let selection = null;       // { idx, record: Float32Array(4), system }
+// Snapshot lags the GPU by up to one rebuild cycle: between a perm application
+// and the next readback, indices refer to pre-perm order (picking may hit a
+// Morton-neighbor; self-corrects on next snapshot).
+let selection = null;       // { idx, system }
 let centralIdx2 = -1;          // galaxy B's central (Collision preset), -1 = none
 let haloPerGalaxy = 0;         // halo mass per halo for this preset (0 = off)
 let haloCenters = [];          // SMOOTHED galaxy centres (EMA of BH positions)
@@ -62,7 +65,6 @@ function updateStarInfo() {
 function select(idx, record) {
   selection = {
     idx,
-    record: Float32Array.from(record),
     system: generateSystem(record[0], record[1], record[2]),
   };
   renderer.selectedIdx = idx;
@@ -79,12 +81,14 @@ function deselect() {
   renderer.systemFade = 0;
   systemRenderer?.setSystem(null);
   camera.setMinRadius(2);
+  camera.radius = Math.max(camera.radius, R_ENTER);
   if (camera._goal.radius < 2.5) camera._goal.radius = 2.5;
   window.__system = null;
   updateStarInfo();
 }
 
 async function handlePick(x, y) {
+  if (renderer.systemFade > 0) return;   // inside a system: clicks are not picks
   if (!sim?.ready || !lastPositions) return;
   const mySim = sim;
   const dpr = devicePixelRatio || 1;
@@ -218,6 +222,7 @@ async function init(params) {
     return init(controls.state).catch(fail);
   };
   window.__select = async idx => {
+    if (!sim?.ready || idx < 0 || idx >= sim.N) return;
     const mySim = sim;
     const rec = await readStellarRecords(gpuDevice, sim.stellarBuffer, [idx]);
     if (sim !== mySim) return;
@@ -316,11 +321,7 @@ function loop() {
     // Permutation is a gather (out[i] = in[perm[i]]): old index → the new
     // slot that references it.
     if (selection) {
-      const perm = pendingTree.perm;
-      let ni = -1;
-      for (let i = 0; i < perm.length; i++) {
-        if (perm[i] === selection.idx) { ni = i; break; }
-      }
+      const ni = remapIndex(pendingTree.perm, selection.idx);
       if (ni >= 0) { selection.idx = ni; renderer.selectedIdx = ni; }
       else deselect();
     }
