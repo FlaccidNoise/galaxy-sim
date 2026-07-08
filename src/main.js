@@ -131,6 +131,7 @@ async function init(params) {
   sim = newSim;
   renderer.centralIdx = centralIdx;
   window.__sim = sim;  // debug/verification hooks
+  window.__renderer = renderer;
   window.__dbg = () => ({ centralIdx, centralIdx2, haloPerGalaxy, sfRho0, simTime });
   window.__state = controls?.state;
   window.__restart = (over = {}) => {

@@ -26,6 +26,8 @@ export class RendererGPU {
     this.agingRate = 25.0;      // Myr of stellar aging per simulation time unit
     this.dustStrength = 0.45;
     this.hiiStrength = 0.6;
+    this.selectedIdx = 0xffffffff;   // no selection
+    this.systemFade = 0;
 
     this._sceneBindGroups = new Map(); // pipeline → particleBuffer → stellarBuffer → bind group
   }
@@ -118,6 +120,23 @@ export class RendererGPU {
       vertex: { module, entryPoint: 'vs_hii' },
       fragment: {
         module, entryPoint: 'fs_hii',
+        targets: [{
+          format: HDR,
+          blend: {
+            color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
+            alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
+          },
+        }],
+      },
+      primitive: { topology: 'triangle-list' },
+    });
+
+    this.highlightPipeline = device.createRenderPipeline({
+      label: 'highlight',
+      layout: 'auto',
+      vertex: { module, entryPoint: 'vs_highlight' },
+      fragment: {
+        module, entryPoint: 'fs_highlight',
         targets: [{
           format: HDR,
           blend: {
@@ -256,6 +275,20 @@ export class RendererGPU {
     return bg;
   }
 
+  _highlightBindGroup(buffer) {
+    if (this._hlBuffer !== buffer) {
+      this._hlBG = this.device.createBindGroup({
+        layout: this.highlightPipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: { buffer } },
+          { binding: 1, resource: { buffer: this.uniformBuffer } },
+        ],
+      });
+      this._hlBuffer = buffer;
+    }
+    return this._hlBG;
+  }
+
   _writeUniforms(camera, time) {
     const u = new Float32Array(44);
     u.set(camera.viewProj, 0);
@@ -271,6 +304,8 @@ export class RendererGPU {
     u[38] = this.agingRate;
     u[39] = this.dustStrength;
     u[40] = this.hiiStrength;
+    u[41] = this.systemFade;
+    new Uint32Array(u.buffer)[42] = this.selectedIdx;
     this.device.queue.writeBuffer(this.uniformBuffer, 0, u);
 
     this.device.queue.writeBuffer(this.compositeParams, 0,
@@ -280,6 +315,7 @@ export class RendererGPU {
   /** Drop cached bind groups (call when the sim's buffers are replaced). */
   clearSceneCache() {
     this._sceneBindGroups.clear();
+    this._hlBuffer = null;
   }
 
   /** Encode the full frame into the given command encoder. */
@@ -312,6 +348,11 @@ export class RendererGPU {
         pass.setPipeline(this.hiiPipeline);
         pass.setBindGroup(0, this._sceneBindGroup(this.hiiPipeline, particleBuffer, stellarBuffer));
         pass.draw(6, particleCount);
+      }
+      if (this.selectedIdx !== 0xffffffff) {
+        pass.setPipeline(this.highlightPipeline);
+        pass.setBindGroup(0, this._highlightBindGroup(particleBuffer));
+        pass.draw(6, 1);
       }
       pass.end();
     }

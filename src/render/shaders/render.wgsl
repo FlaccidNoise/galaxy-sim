@@ -23,7 +23,7 @@ struct Uniforms {
     camPos        : vec3f,  starIntensity : f32,
     resolution    : vec2f,  sizeScale  : f32,  colorMode : u32,
     speedScale    : f32,    centralIdx : u32,  agingRate : f32,  dustStrength : f32,
-    hiiStrength   : f32,    _q0 : f32,  _q1 : f32,  _q2 : f32,
+    hiiStrength   : f32,    systemFade : f32,  selectedIdx : u32,  _q2 : f32,
 }
 
 @group(0) @binding(0) var<storage, read> particles : array<Particle>;
@@ -177,6 +177,10 @@ fn vs_particle(@builtin(vertex_index) vi : u32,
     } else {
         out.color = blackbodyRGB(temp) * intensity;
     }
+
+    if (ii == u.selectedIdx) {
+        out.color *= (1.0 - u.systemFade);   // the system's sun takes over
+    }
     return out;
 }
 
@@ -285,6 +289,39 @@ fn fs_hii(in : DustOut) -> @location(0) vec4f {
     let a = exp(-d2 * 4.0) * in.strength * 0.10;
     // Hα-dominated emission: saturated pink-red
     return vec4f(vec3f(1.0, 0.35, 0.48) * a, 1.0);
+}
+
+// ── Selection highlight ring ────────────────────────────────────────────────
+@vertex
+fn vs_highlight(@builtin(vertex_index) vi : u32) -> VSOut {
+    var quad = array<vec2f, 6>(
+        vec2f(-1.0, -1.0), vec2f(1.0, -1.0), vec2f(-1.0, 1.0),
+        vec2f(-1.0,  1.0), vec2f(1.0, -1.0), vec2f(1.0, 1.0),
+    );
+    var out : VSOut;
+    if (u.selectedIdx >= arrayLength(&particles)) {
+        out.pos = collapse();
+        out.quadUV = vec2f(0.0);
+        out.color = vec3f(0.0);
+        return out;
+    }
+    let p = particles[u.selectedIdx];
+    var clip = u.viewProj * vec4f(p.pos, 1.0);
+    let corner = quad[vi];
+    let sizePx = 26.0 * u.sizeScale;
+    clip = vec4f(clip.xy + corner * (sizePx / u.resolution) * clip.w, clip.zw);
+    out.pos = clip;
+    out.quadUV = corner;
+    out.color = vec3f(0.35, 0.6, 1.0) * (1.0 - u.systemFade);
+    return out;
+}
+
+@fragment
+fn fs_highlight(in : VSOut) -> @location(0) vec4f {
+    let d = length(in.quadUV);
+    let ring = smoothstep(0.10, 0.02, abs(d - 0.8)) * (0.75 + 0.25 * sin(u.time * 4.0));
+    if (d > 1.0 || ring < 0.01) { discard; }
+    return vec4f(in.color * ring, 1.0);
 }
 
 // ── Fullscreen triangle ─────────────────────────────────────────────────────
