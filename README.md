@@ -4,11 +4,15 @@ Real-time N-body galaxy simulation in the browser. Pure WebGPU — physics and
 rendering share GPU buffers; particle state never touches the CPU during the
 frame loop.
 
-```
+```bash
+git clone https://github.com/FlaccidNoise/galaxy-sim.git
+cd galaxy-sim
 npm start        # serves on http://localhost:3000 (or: npx serve .)
 ```
 
-Requires a WebGPU browser (Chrome 113+, Safari 26+).
+Requires a WebGPU browser (Chrome 113+, Safari 26+). There are no dependencies
+to install — `npm start` just runs `npx serve .`, and any static file server
+works equally well.
 
 ## What's simulated
 
