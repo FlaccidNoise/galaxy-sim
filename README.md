@@ -72,3 +72,7 @@ src/render/RendererGPU.js    HDR render graph
 src/render/shaders/          WGSL render kernels
 docs/plans/                  historical design documents (pre-rewrite)
 ```
+
+## License
+
+MIT — see [LICENSE](LICENSE).
