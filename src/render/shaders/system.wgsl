@@ -13,12 +13,12 @@ struct SysUniforms {
 struct Body {
     orbit  : vec4f,   // a, phase, rate, radius
     parent : vec4f,   // parentA, parentPhase, parentRate, kind (as f32)
-    look   : vec4f,   // seed, p1, p2, unused
+    look   : vec4f,   // seed, p1, p2, ring index + 1 (0 = none)
 }
 
 struct Ring {
     orbit : vec4f,    // parentA, parentPhase, parentRate, seed
-    size  : vec4f,    // inner, outer, unused, unused
+    size  : vec4f,    // inner, outer, planet radius, unused
 }
 
 @group(0) @binding(0) var<uniform> su : SysUniforms;
@@ -96,46 +96,146 @@ fn fbm(p : vec3f) -> f32 {
     return v;
 }
 
-// Surface color as a function of the unit sphere-surface point — this is the
-// piece that ports unchanged to a terrain-mesh pipeline for surface zoom.
-fn surfaceColor(kind : u32, n : vec3f, look : vec3f, t : f32) -> vec3f {
-    let sp = n * 3.0 + vec3f(look.x * 91.7);   // seed offsets the noise domain
-    let h = fbm(sp);
-    let lat = abs(n.z);                        // poles along ±Z
-    switch kind {
-        case 1u: {   // scorched rock
-            return mix(vec3f(0.25, 0.12, 0.08), vec3f(0.55, 0.30, 0.15), h);
-        }
-        case 2u: {   // venusian: thick slowly-churning haze
-            let bands = fbm(sp * 1.5 + vec3f(0.0, 0.0, t * 0.02));
-            return mix(vec3f(0.75, 0.60, 0.30), vec3f(0.90, 0.80, 0.55), bands);
-        }
-        case 3u: {   // terran: oceans, continents, ice caps, drifting clouds
-            let water = look.y * 0.35 + 0.35;
-            var col : vec3f;
-            if (h < water) {
-                col = mix(vec3f(0.01, 0.05, 0.18), vec3f(0.02, 0.12, 0.30), h / max(water, 0.01));
-            } else {
-                col = mix(vec3f(0.10, 0.30, 0.12), vec3f(0.45, 0.38, 0.22), fbm(sp * 2.7));
+// Voronoi craters: x/y/z = height gradient, w = height (bowl < 0, rim > 0)
+fn craters(p : vec3f) -> vec4f {
+    let i = floor(p);
+    var acc = vec4f(0.0);
+    for (var z = -1; z <= 1; z++) {
+        for (var y = -1; y <= 1; y++) {
+            for (var x = -1; x <= 1; x++) {
+                let c = i + vec3f(f32(x), f32(y), f32(z));
+                let d = p - c - vec3f(hash13(c), hash13(c + 3.3), hash13(c + 5.7));
+                let rad = 0.2 + 0.4 * hash13(c + 7.1);
+                let len = length(d);
+                let u = len / rad;
+                if (u < 1.6) {
+                    let rim = 0.35 * exp(-(u - 1.0) * (u - 1.0) * 25.0);
+                    let inside = select(0.0, 1.0, u < 1.0);
+                    let h = inside * 0.6 * (u * u - 1.0) + rim;
+                    let dh = inside * 1.2 * u - rim * 50.0 * (u - 1.0);
+                    acc += vec4f(d / max(len, 1e-4) * dh / rad, h);
+                }
             }
-            col = mix(col, vec3f(0.90, 0.92, 0.95), smoothstep(0.78, 0.92, lat));
-            let clouds = smoothstep(0.55, 0.75, fbm(sp * 4.0 + vec3f(t * 0.01, 0.0, 0.0)));
-            return mix(col, vec3f(1.0), clouds * 0.7);
-        }
-        case 4u: {   // icy
-            return mix(vec3f(0.55, 0.62, 0.70), vec3f(0.85, 0.90, 0.95), h);
-        }
-        case 5u: {   // gas giant: latitude bands + storms
-            let bands = fbm(vec3f(sp.x * 0.3, sp.y * 0.3, n.z * (6.0 + look.z * 6.0)));
-            let col = mix(vec3f(0.45, 0.30, 0.18), vec3f(0.80, 0.65, 0.45), bands);
-            let storm = smoothstep(0.72, 0.85, fbm(sp * 2.0 + vec3f(31.7)));
-            return mix(col, vec3f(0.85, 0.40, 0.25), storm * 0.6);
-        }
-        default: {   // 6: ice giant
-            let bands = fbm(vec3f(sp.x * 0.4, sp.y * 0.4, n.z * 5.0));
-            return mix(vec3f(0.15, 0.30, 0.50), vec3f(0.35, 0.60, 0.80), bands);
         }
     }
+    return acc;
+}
+
+// Storm oval centred at (z0, lon0): x = interior, y = dark collar
+fn oval(n : vec3f, z0 : f32, lon0 : f32, size : f32) -> vec2f {
+    var dl = atan2(n.y, n.x) - lon0;
+    dl -= 6.2831853 * round(dl / 6.2831853);
+    let q = length(vec2f(dl * sqrt(max(1.0 - n.z * n.z, 0.0)) / (size * 2.2), (n.z - z0) / size));
+    return vec2f(1.0 - smoothstep(0.6, 1.0, q), smoothstep(0.7, 0.95, q) * (1.0 - smoothstep(0.95, 1.2, q)));
+}
+
+// Surface albedo (rgb) and ocean mask (a) as a function of the unit
+// sphere-surface point in the body frame (pole = +Z) — this is the piece that
+// ports unchanged to a terrain-mesh pipeline for surface zoom.
+fn surfaceColor(kind : u32, n : vec3f, look : vec4f, t : f32) -> vec4f {
+    let sp = n * 3.0 + vec3f(look.x * 91.7);   // seed offsets the noise domain
+    switch kind {
+        case 1u: {   // scorched rock
+            return vec4f(mix(vec3f(0.25, 0.12, 0.08), vec3f(0.55, 0.30, 0.15), fbm(sp)), 0.0);
+        }
+        case 2u: {   // venusian: thick slowly-churning haze
+            let warp = fbm(sp * 1.2 + vec3f(0.0, 0.0, t * 0.02));
+            let haze = fbm(vec3f(sp.xy * 0.8, n.z * 3.0) + warp * 1.5);
+            return vec4f(mix(vec3f(0.78, 0.66, 0.40), vec3f(0.95, 0.88, 0.68), haze), 0.0);
+        }
+        case 3u: {   // terran: oceans, continents, ice caps (clouds are a separate layer)
+            let h = fbm(sp);
+            let water = look.y * 0.35 + 0.35;
+            var col = mix(vec3f(0.10, 0.30, 0.12), vec3f(0.45, 0.38, 0.22), fbm(sp * 2.7));
+            col = mix(col, mix(vec3f(0.01, 0.05, 0.18), vec3f(0.02, 0.12, 0.30), h / max(water, 0.01)),
+                      step(h, water));
+            let cap = smoothstep(0.78, 0.92, abs(n.z));
+            col = mix(col, vec3f(0.90, 0.92, 0.95), cap);
+            return vec4f(col, (1.0 - smoothstep(water - 0.01, water + 0.01, h)) * (1.0 - cap));
+        }
+        case 4u: {   // icy
+            return vec4f(mix(vec3f(0.55, 0.62, 0.70), vec3f(0.85, 0.90, 0.95), fbm(sp)), 0.0);
+        }
+        case 5u: {   // gas giant: domain-warped latitude bands + storm ovals
+            let warp = fbm(sp * 1.3 + vec3f(t * 0.003, 0.0, 0.0));
+            let z = n.z + (warp - 0.5) * 0.15;
+            let freq = 5.0 + look.z * 6.0;
+            let belts = 0.5 + 0.5 * sin(z * freq * 3.14159 + look.x * 6.2831853);
+            let fine = fbm(vec3f(sp.xy * 0.35, z * freq * 3.0) + warp);
+            let dark = mix(vec3f(0.50, 0.32, 0.20), vec3f(0.45, 0.40, 0.32), look.y);
+            var col = mix(dark, vec3f(0.88, 0.80, 0.66), clamp(belts * 0.7 + fine * 0.5 - 0.1, 0.0, 1.0));
+            let s1 = oval(n, -0.35 + 0.3 * look.y, look.z * 6.2831853, 0.07 + 0.05 * look.y);
+            col = mix(col, mix(vec3f(0.78, 0.40, 0.25), vec3f(0.92, 0.88, 0.80), step(0.6, look.x)), s1.x);
+            col *= 1.0 - 0.3 * s1.y;
+            if (look.y > 0.4) {
+                let s2 = oval(n, 0.4 - 0.2 * look.z, look.x * 6.2831853 + 2.0, 0.04);
+                col = mix(col, vec3f(0.92, 0.90, 0.85), s2.x);
+            }
+            return vec4f(col, 0.0);
+        }
+        case 6u: {   // ice giant: faint bands, polar haze, dark spot
+            let warp = fbm(sp + vec3f(t * 0.003, 0.0, 0.0));
+            let z = n.z + (warp - 0.5) * 0.1;
+            let bands = fbm(vec3f(sp.xy * 0.3, z * 8.0));
+            var col = mix(mix(vec3f(0.18, 0.38, 0.58), vec3f(0.42, 0.68, 0.85), bands),
+                          mix(vec3f(0.45, 0.70, 0.75), vec3f(0.62, 0.85, 0.88), bands), look.y);
+            col = mix(col, vec3f(0.75, 0.85, 0.90), smoothstep(0.75, 0.95, abs(z)) * 0.5);
+            col = mix(col, col * 0.45, oval(n, -0.3, look.z * 6.2831853, 0.06).x * step(look.y, 0.5));
+            return vec4f(col, 0.0);
+        }
+        default: {   // 7: rocky moon — grey regolith with darker maria
+            let maria = smoothstep(0.45, 0.6, fbm(sp * 0.7));
+            return vec4f(mix(vec3f(0.42, 0.40, 0.38), vec3f(0.22, 0.21, 0.20), maria)
+                         * (0.85 + 0.3 * fbm(sp * 2.0)), 0.0);
+        }
+    }
+}
+
+// Cloud cover drifting around the pole; the surface beneath stays fixed
+fn clouds(n : vec3f, seed : f32, t : f32) -> f32 {
+    let a = t * 0.012;
+    let p = vec3f(n.x * cos(a) - n.y * sin(a), n.x * sin(a) + n.y * cos(a), n.z) * 4.0 + vec3f(seed * 53.1);
+    return smoothstep(0.5, 0.72, fbm(p + fbm(p * 0.5) * 1.8));
+}
+
+// Atmosphere tint (rgb) and strength (a); a = 0 means airless
+fn atmoTint(kind : u32) -> vec4f {
+    switch kind {
+        case 2u: { return vec4f(1.00, 0.90, 0.65, 0.9); }   // venusian: yellow-white
+        case 3u: { return vec4f(0.35, 0.60, 1.00, 1.0); }   // terran: Rayleigh blue
+        case 5u: { return vec4f(0.85, 0.80, 0.70, 0.5); }   // gas giant: pale
+        case 6u: { return vec4f(0.40, 0.85, 1.00, 0.8); }   // ice giant: cyan
+        default: { return vec4f(0.0); }
+    }
+}
+
+// Limb scattering at grazing view: brightest on the lit limb, with a thin
+// forward-scatter glow just past the terminator when looking sunward.
+fn limbGlow(tint : vec4f, ndl : f32, rd : vec3f, l : vec3f) -> vec3f {
+    let lit = smoothstep(-0.3, 0.5, ndl);
+    let dusk = smoothstep(-0.35, 0.0, ndl) * (1.0 - smoothstep(0.0, 0.2, ndl));
+    let fwd = pow(max(dot(rd, l), 0.0), 6.0);
+    return tint.rgb * tint.w * (lit + dusk * (0.25 + 2.0 * fwd));
+}
+
+// Rings are equatorial; the tilt is seeded so the ring/planet shadows show
+fn ringNormal(seed : f32) -> vec3f {
+    let tilt = 0.25 + 0.3 * fract(seed * 7.31);
+    let az = seed * 6.2831853;
+    return vec3f(sin(tilt) * cos(az), sin(tilt) * sin(az), cos(tilt));
+}
+
+fn ringBasis(nrm : vec3f) -> mat3x3f {
+    let e1 = normalize(cross(vec3f(0.0, 1.0, 0.0), nrm));
+    return mat3x3f(e1, cross(nrm, e1), nrm);
+}
+
+fn ringDensity(rad : f32, inner : f32, outer : f32, seed : f32) -> f32 {
+    let t = (rad - inner) / (outer - inner);
+    if (t < 0.0 || t > 1.0) { return 0.0; }
+    let bands = 0.3 + 0.45 * vnoise(vec3f(t * 24.0, seed * 97.0, 0.0)) + 0.25 * vnoise(vec3f(t * 90.0, seed * 31.0, 0.0));
+    let gap = smoothstep(0.0, 0.02, abs(t - 0.55 - 0.2 * fract(seed * 3.7)));
+    return bands * gap * smoothstep(0.0, 0.06, t) * smoothstep(1.0, 0.94, t);
 }
 
 // ── Impostor sphere bodies ──────────────────────────────────────────────────
@@ -145,15 +245,17 @@ struct BodyVSOut {
     @location(1) @interpolate(flat) center : vec3f,
     @location(2) @interpolate(flat) radius : f32,
     @location(3) @interpolate(flat) kind : u32,
-    @location(4) @interpolate(flat) look : vec3f,
+    @location(4) @interpolate(flat) look : vec4f,
 }
 
 @vertex
 fn vs_body(@builtin(vertex_index) vi : u32,
            @builtin(instance_index) ii : u32) -> BodyVSOut {
     let b = bodies[ii];
-    let corner = QUAD[vi] * 1.05;   // slight inflation: silhouette never clips
     let c = bodyCenter(b);
+    // Cover the perspective silhouette plus the atmosphere halo, even up close
+    let k = b.orbit.w / max(length(c - su.camPos), 1e-6);
+    let corner = QUAD[vi] * 1.15 / sqrt(max(1.0 - k * k, 0.01));
     let world = c + (su.camRight * corner.x + su.camUp * corner.y) * b.orbit.w;
     var out : BodyVSOut;
     out.pos = su.viewProj * vec4f(world, 1.0);
@@ -161,7 +263,7 @@ fn vs_body(@builtin(vertex_index) vi : u32,
     out.center = c;
     out.radius = b.orbit.w;
     out.kind = u32(b.parent.w);
-    out.look = b.look.xyz;
+    out.look = b.look;
     return out;
 }
 
@@ -178,45 +280,118 @@ fn fs_body(in : BodyVSOut) -> BodyFSOut {
     let bq = dot(oc, rd);
     let cq = dot(oc, oc) - in.radius * in.radius;
     let disc = bq * bq - cq;
-    if (disc < 0.0) { discard; }
+    let sunCol = blackbodyRGB(su.starTemp);
+    let tint = atmoTint(in.kind);
+    var out : BodyFSOut;
+
+    if (disc < 0.0) {   // ray misses: thin atmosphere halo just outside the limb
+        if (tint.w == 0.0 || bq > 0.0) { discard; }
+        let p = ro - rd * bq;
+        let alt = (length(p - in.center) / in.radius - 1.0) / 0.012;
+        let glow = sunCol * limbGlow(tint, dot(normalize(p - in.center), -normalize(p)), rd, -normalize(p)) * exp(-alt);
+        out.color = vec4f(glow * su.fade, 0.0);   // additive under premultiplied blend
+        out.depth = 0.99999;                      // never occludes what is drawn later
+        return out;
+    }
     var thit = -bq - sqrt(disc);
     if (thit < 0.0) { thit = -bq + sqrt(disc); }   // camera inside the sphere: far root
     if (thit < 0.0) { discard; }
     let hit = ro + rd * thit;
     let n = normalize(hit - in.center);
 
-    var out : BodyFSOut;
     let clip = su.viewProj * vec4f(hit, 1.0);
     out.depth = clip.z / clip.w;
 
-    if (in.kind == 0u) {   // the star: emissive, limb-darkened, HDR-hot
-        let limb = 0.4 + 0.6 * abs(dot(n, rd));
-        let granule = 0.9 + 0.2 * fbm(n * 8.0 + vec3f(su.time * 0.05));
-        let col = blackbodyRGB(su.starTemp) * 14.0 * limb * granule;
+    if (in.kind == 0u) {   // the star: emissive, limb-darkened, granulated, HDR-hot
+        let mu = abs(dot(n, rd));
+        let limb = 1.0 - 0.7 * (1.0 - mu);
+        let gran = 0.5 + 0.8 * smoothstep(0.3, 0.7, fbm(n * 40.0 + vec3f(0.0, 0.0, su.time * 0.03)));
+        let spots = 1.0 - 0.85 * smoothstep(0.66, 0.76, fbm(n * 2.5 + vec3f(17.3)));
+        let col = blackbodyRGB(su.starTemp * (0.7 + 0.3 * mu)) * 12.0 * limb * gran * spots;
         out.color = vec4f(col * su.fade, su.fade);
         return out;
     }
 
-    let lightDir = -normalize(hit);   // the sun sits at the origin
-    let diff = max(dot(n, lightDir), 0.0);
-    var col = surfaceColor(in.kind, n, in.look, su.time) * (diff * 1.2 + 0.03);
-    // Atmosphere rim on the lit edge
-    let rim = pow(1.0 - abs(dot(n, -rd)), 3.0);
-    var atmo = vec3f(0.0);
-    if (in.kind == 3u) { atmo = vec3f(0.30, 0.50, 1.00); }
-    if (in.kind == 5u) { atmo = vec3f(0.20, 0.16, 0.12); }
-    col += atmo * rim * (diff + 0.15);
+    let l = -normalize(hit);   // the sun sits at the origin
+    var frame = ringBasis(vec3f(0.0, 0.0, 1.0));
+    var shade = 1.0;
+    let ri = u32(in.look.w);
+    if (ri > 0u) {   // ringed: pole follows the ring plane, which shadows the planet
+        let rg = rings[ri - 1u];
+        frame = ringBasis(ringNormal(rg.orbit.w));
+        let s = dot(in.center - hit, frame[2]) / dot(l, frame[2]);
+        if (s > 0.0) {
+            shade = 1.0 - 0.85 * ringDensity(length(hit + l * s - in.center), rg.size.x, rg.size.y, rg.orbit.w);
+        }
+    }
+    let nb = n * frame;   // world → body frame
+    let surf = surfaceColor(in.kind, nb, in.look, su.time);
+    var albedo = surf.rgb;
+    var ns = n;
+    if (in.kind == 1u || in.kind == 7u) {   // airless: bump-shaded craters
+        let cr = craters(nb * 5.0 + vec3f(in.look.x * 37.0));
+        let g = frame * cr.xyz;
+        ns = normalize(n - 0.08 * (g - dot(g, n) * n));
+        albedo *= 1.0 + 0.25 * cr.w;
+    }
+    let ndl = dot(n, l);
+    let light = sunCol * max((dot(ns, l) + 0.04) / 1.04, 0.0) * 1.3 * shade;   // soft terminator: the sun is a disc
+    var col = albedo * (light + 0.015);
+    let mu = max(dot(n, -rd), 0.0);
+
+    if (in.kind == 3u) {
+        let lb = l * frame;
+        let cloud = clouds(nb, in.look.x, su.time);
+        let cshadow = 1.0 - 0.6 * clouds(normalize(nb + lb * 0.03), in.look.x, su.time);
+        let h = normalize(l - rd);
+        let spec = pow(max(dot(n, h), 0.0), 500.0) * surf.a * step(0.0, ndl) * (1.0 - cloud);
+        col = albedo * (light * cshadow + 0.015) + sunCol * spec * 3.0 * shade * cshadow;
+        col = mix(col, vec3f(0.95) * (light + 0.015), cloud * 0.9);
+    }
+    if (in.kind == 5u || in.kind == 6u) {
+        col *= 0.55 + 0.45 * sqrt(mu);   // limb darkening
+    }
+    if (tint.w > 0.0) {
+        col += sunCol * shade * limbGlow(tint, ndl, rd, l) * pow(1.0 - mu, 4.0);
+    }
     out.color = vec4f(col * su.fade, su.fade);   // premultiplied crossfade
     return out;
 }
 
-// ── Planetary rings: flat annulus in the orbital plane ─────────────────────
+// ── Corona: additive halo around the star, ~1/r² out to 4 radii ────────────
+struct CoronaVSOut {
+    @builtin(position) pos : vec4f,
+    @location(0) worldPos : vec3f,
+    @location(1) @interpolate(flat) radius : f32,
+}
+
+@vertex
+fn vs_corona(@builtin(vertex_index) vi : u32) -> CoronaVSOut {
+    let r = bodies[0].orbit.w;
+    let world = (su.camRight * QUAD[vi].x + su.camUp * QUAD[vi].y) * r * 4.0;
+    var out : CoronaVSOut;
+    out.pos = su.viewProj * vec4f(world, 1.0);
+    out.worldPos = world;
+    out.radius = r;
+    return out;
+}
+
+@fragment
+fn fs_corona(in : CoronaVSOut) -> @location(0) vec4f {
+    let rd = normalize(in.worldPos - su.camPos);
+    let x = max(length(su.camPos + rd * max(-dot(su.camPos, rd), 0.0)) / in.radius, 1.0);
+    let w = 1.0 - min(x / 4.0, 1.0);
+    return vec4f(blackbodyRGB(su.starTemp) * 2.5 * w * w * w / (x * x) * su.fade, 0.0);
+}
+
+// ── Planetary rings: flat annulus in the tilted equatorial plane ───────────
 struct RingVSOut {
     @builtin(position) pos : vec4f,
     @location(0) local : vec2f,
-    @location(1) @interpolate(flat) inner : f32,
-    @location(2) @interpolate(flat) outer : f32,
-    @location(3) @interpolate(flat) seed : f32,
+    @location(1) worldPos : vec3f,
+    @location(2) @interpolate(flat) center : vec3f,
+    @location(3) @interpolate(flat) size : vec4f,
+    @location(4) @interpolate(flat) seed : f32,
 }
 
 @vertex
@@ -225,11 +400,13 @@ fn vs_ring(@builtin(vertex_index) vi : u32,
     let rg = rings[ii];
     let c = orbitPos(rg.orbit.x, rg.orbit.y, rg.orbit.z);
     let local = QUAD[vi] * rg.size.y;
+    let world = c + ringBasis(ringNormal(rg.orbit.w)) * vec3f(local, 0.0);
     var out : RingVSOut;
-    out.pos = su.viewProj * vec4f(c + vec3f(local, 0.0), 1.0);
+    out.pos = su.viewProj * vec4f(world, 1.0);
     out.local = local;
-    out.inner = rg.size.x;
-    out.outer = rg.size.y;
+    out.worldPos = world;
+    out.center = c;
+    out.size = rg.size;
     out.seed = rg.orbit.w;
     return out;
 }
@@ -237,36 +414,48 @@ fn vs_ring(@builtin(vertex_index) vi : u32,
 @fragment
 fn fs_ring(in : RingVSOut) -> @location(0) vec4f {
     let rad = length(in.local);
-    if (rad < in.inner || rad > in.outer) { discard; }
-    let t = (rad - in.inner) / (in.outer - in.inner);
-    let bands = 0.35 + 0.65 * vnoise(vec3f(t * 24.0, in.seed * 97.0, 0.0));
-    let edge = smoothstep(0.0, 0.06, t) * smoothstep(1.0, 0.94, t);
-    let a = bands * edge * 0.55 * su.fade;
-    return vec4f(vec3f(0.75, 0.68, 0.58) * a, a);
+    if (rad < in.size.x || rad > in.size.y) { discard; }
+    let d = ringDensity(rad, in.size.x, in.size.y, in.seed);
+    // Planet shadow: does the ray toward the sun hit the planet?
+    let l = -normalize(in.worldPos);
+    let oc = in.worldPos - in.center;
+    let b = dot(oc, l);
+    var lit = 1.0;
+    if (b < 0.0) { lit = smoothstep(0.97, 1.03, sqrt(max(dot(oc, oc) - b * b, 0.0)) / in.size.z); }
+    // Seen from the unlit face, only light diffusing through thin regions shows
+    let nrm = ringNormal(in.seed);
+    if (dot(su.camPos - in.worldPos, nrm) * dot(l, nrm) < 0.0) { lit *= 0.35 * (1.0 - 0.6 * d); }
+    let t = (rad - in.size.x) / (in.size.y - in.size.x);
+    let col = mix(vec3f(0.75, 0.68, 0.58), vec3f(0.55, 0.50, 0.45), vnoise(vec3f(t * 7.0, in.seed * 13.0, 0.0)));
+    let a = d * 0.8 * su.fade;
+    return vec4f(col * blackbodyRGB(su.starTemp) * (lit * 1.2 + 0.015) * a, a);
 }
 
 // ── Asteroid belt: instanced Keplerian point sprites ────────────────────────
 struct BeltVSOut {
     @builtin(position) pos : vec4f,
     @location(0) quadUV : vec2f,
-    @location(1) @interpolate(flat) bright : f32,
+    @location(1) @interpolate(flat) color : vec3f,
 }
 
 @vertex
 fn vs_belt(@builtin(vertex_index) vi : u32,
            @builtin(instance_index) ii : u32) -> BeltVSOut {
     let d0 = belt[ii * 2u];        // a, phase, rate, size
-    let d1 = belt[ii * 2u + 1u];   // incl, node, bright, _
+    let d1 = belt[ii * 2u + 1u];   // incl, node, bright, tint
     let ang = d0.y + d0.z * su.time;
     let p = vec3f(cos(ang) * d0.x, sin(ang) * d0.x, sin(ang + d1.y) * d0.x * d1.x);
     var clip = su.viewProj * vec4f(p, 1.0);
     let corner = QUAD[vi];
-    let sizePx = 1.0 + d0.w * 1.5;
+    // Projected diameter of a ~0.002 AU rock: sub-pixel dust from afar, specks up close
+    let px = 0.002 * d0.w * su.resolution.y / (max(clip.w, 1e-4) * su.tanHalfFov);
+    let sizePx = clamp(px, 1.5, 8.0);   // smaller quads would miss pixel centres
     clip = vec4f(clip.xy + corner * (sizePx / su.resolution) * clip.w, clip.zw);
     var out : BeltVSOut;
     out.pos = clip;
     out.quadUV = corner;
-    out.bright = d1.z;
+    out.color = mix(vec3f(0.60, 0.60, 0.58), vec3f(0.62, 0.47, 0.33), d1.w)
+              * blackbodyRGB(su.starTemp) * d1.z * clamp(px / 1.5, 0.4, 1.0);
     return out;
 }
 
@@ -274,8 +463,7 @@ fn vs_belt(@builtin(vertex_index) vi : u32,
 fn fs_belt(in : BeltVSOut) -> @location(0) vec4f {
     let d2 = dot(in.quadUV, in.quadUV);
     if (d2 > 1.0) { discard; }
-    let a = exp(-d2 * 2.5) * in.bright * 0.5 * su.fade;
-    return vec4f(vec3f(0.70, 0.65, 0.55) * a, 1.0);
+    return vec4f(in.color * exp(-d2 * 3.0) * 0.6 * su.fade, 1.0);
 }
 
 // ── Faint orbit guide lines ─────────────────────────────────────────────────

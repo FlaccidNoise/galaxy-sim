@@ -37,7 +37,7 @@ export class SystemRenderer {
       entries: [
         { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
         { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
-        { binding: 2, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+        { binding: 2, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
         { binding: 3, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
         { binding: 4, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
       ],
@@ -69,6 +69,14 @@ export class SystemRenderer {
       layout: this.pipelineLayout,
       vertex: { module: this.module, entryPoint: 'vs_ring' },
       fragment: { module: this.module, entryPoint: 'fs_ring', targets: [{ format: HDR, blend: premul }] },
+      primitive: { topology: 'triangle-list' },
+      depthStencil: depthRead,
+    });
+    this.coronaPipeline = device.createRenderPipeline({
+      label: 'sys-corona',
+      layout: this.pipelineLayout,
+      vertex: { module: this.module, entryPoint: 'vs_corona' },
+      fragment: { module: this.module, entryPoint: 'fs_corona', targets: [{ format: HDR, blend: additive }] },
       primitive: { topology: 'triangle-list' },
       depthStencil: depthRead,
     });
@@ -116,12 +124,13 @@ export class SystemRenderer {
     const rings = [];
     const orbits = [];
     for (const p of system.planets) {
-      bodies.push([p.a, p.phase, p.rate, p.radius, 0, 0, 0, p.kind, p.seed, p.p1, p.p2, 0]);
+      if (p.rings) rings.push([p.a, p.phase, p.rate, p.rings.seed, p.rings.inner, p.rings.outer, p.radius, 0]);
+      bodies.push([p.a, p.phase, p.rate, p.radius, 0, 0, 0, p.kind, p.seed, p.p1, p.p2, p.rings ? rings.length : 0]);
       orbits.push([p.a, 0, 0, 0]);
-      if (p.rings) rings.push([p.a, p.phase, p.rate, p.rings.seed, p.rings.inner, p.rings.outer, 0, 0]);
-      for (const m of p.moons) {
-        bodies.push([m.a, m.phase, m.rate, m.radius, p.a, p.phase, p.rate, KIND.ICY, p.seed + 0.31, 0.5, 0.5, 0]);
-      }
+      p.moons.forEach((m, i) => {
+        const kind = (p.seed * 7.31 + i * 0.618) % 1 < 0.5 ? KIND.ROCKY : KIND.ICY;
+        bodies.push([m.a, m.phase, m.rate, m.radius, p.a, p.phase, p.rate, kind, p.seed + 0.31 + i * 0.17, 0.5, 0.5, 0]);
+      });
     }
     this.numBodies = bodies.length;
     this.numRings = rings.length;
@@ -158,6 +167,7 @@ export class SystemRenderer {
         beltData[o + 4] = (rb() * 2 - 1) * 0.04;   // inclination
         beltData[o + 5] = rb() * 2 * Math.PI;      // node
         beltData[o + 6] = 0.4 + rb() * 0.6;        // brightness
+        beltData[o + 7] = rb();                    // grey → brown tint
       }
       this.numBelt = count;
     }
@@ -232,6 +242,8 @@ export class SystemRenderer {
       pass.setPipeline(this.ringPipeline);
       pass.draw(6, this.numRings);
     }
+    pass.setPipeline(this.coronaPipeline);
+    pass.draw(6, 1);
     if (this.numBelt > 0) {
       pass.setPipeline(this.beltPipeline);
       pass.draw(6, this.numBelt);

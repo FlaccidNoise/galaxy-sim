@@ -13,7 +13,7 @@ export function mulberry32(seed) {
 }
 
 // Appearance palette ids — must match the switch in system.wgsl
-export const KIND = { SUN: 0, SCORCHED: 1, VENUSIAN: 2, TERRAN: 3, ICY: 4, GAS: 5, ICE_GIANT: 6 };
+export const KIND = { SUN: 0, SCORCHED: 1, VENUSIAN: 2, TERRAN: 3, ICY: 4, GAS: 5, ICE_GIANT: 6, ROCKY: 7 };
 
 // Sim-time units; inner planets complete an orbit in ~10 s of real time
 const ORBIT_SPEED = 0.08;
@@ -71,6 +71,7 @@ export function generateSystem(stellarMass, birthTime, seed) {
       kind = rand() < 0.6 ? KIND.GAS : KIND.ICE_GIANT;
       radius = kind === KIND.GAS ? 0.15 + 0.2 * rand() : 0.1 + 0.08 * rand();
     }
+    radius = Math.min(radius, 0.12 * a);   // tight red-dwarf orbits: no engulfing the star or neighbours
     const planet = {
       a, phase: rand() * 2 * Math.PI, rate: orbitRate(a),
       radius, kind, seed: rand(), p1: rand(), p2: rand(),

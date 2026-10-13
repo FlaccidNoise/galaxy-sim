@@ -43,6 +43,16 @@ test('orbits strictly increase; moons stay outside the planet; ≤4 moons', () =
   }
 });
 
+test('planets never engulf the star or each other', () => {
+  for (let i = 0; i < 300; i++) {
+    const sys = generateSystem(0.08 + i * 0.03, -i * 11, (i * 13 % 100) / 100);
+    sys.planets.forEach((p, j) => {
+      assert.ok(p.a - p.radius > sys.star.radius);
+      if (j > 0) assert.ok(p.a - p.radius > sys.planets[j - 1].a + sys.planets[j - 1].radius);
+    });
+  }
+});
+
 test('massive stars get at most 3 planets', () => {
   for (let i = 0; i < 100; i++) {
     assert.ok(generateSystem(8 + i * 0.3, -i, i / 100).planets.length <= 3);
