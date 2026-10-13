@@ -36,6 +36,7 @@ struct VSOut {
     @builtin(position) pos : vec4f,
     @location(0) quadUV : vec2f,   // [-1, 1] across the sprite
     @location(1) color  : vec3f,
+    @location(2) spike  : f32,     // quad half-size in core radii (1 = no spikes)
 }
 
 // Planckian-locus blackbody color (Tanner Helland's fit to CIE data),
@@ -161,15 +162,28 @@ fn vs_particle(@builtin(vertex_index) vi : u32,
     let intensity = pow(max(lum, 1e-5), 0.55) * u.starIntensity;
 
     // Sprite size grows slowly with brightness; supernovae get big.
+    // Beyond d0 the sprite shrinks as 1/d (far-field look). Inside d0 a star
+    // stays a point: the sprite grows only as 1/√d up to ~7 px, and the area
+    // it no longer covers goes into brightness (total flux stays 1/d²),
+    // capped so AgX and bloom carry the rest.
+    let d0 = 60.0;
     let size = clamp(1.1 + 1.05 * log(1.0 + intensity), 1.4, 10.0);
-    let sizePx = max(size * 150.0 / max(clip.w, 0.1), 1.25) * u.sizeScale;
+    let near = max(d0 / max(clip.w, 0.1), 1.0);
+    let base = size * 150.0 / max(clip.w, d0);
+    let sizePx = max(min(base * sqrt(near), max(base, 7.0)), 1.25) * u.sizeScale;
+    let areaRatio = base * near * u.sizeScale / sizePx;
+    let flux = clamp(areaRatio * areaRatio, 1.0, 40.0);
+
+    // Giants, supernovae and O stars get diffraction spikes on a larger quad.
+    let spike = select(1.0, clamp(96.0 * u.sizeScale / sizePx, 1.0, 4.0), lum > 2000.0);
 
     // Screen-aligned billboard: offset corners in NDC, scaled back by w.
-    clip = vec4f(clip.xy + corner * (sizePx / u.resolution) * clip.w, clip.zw);
+    clip = vec4f(clip.xy + corner * spike * (sizePx / u.resolution) * clip.w, clip.zw);
 
     var out : VSOut;
     out.pos = clip;
     out.quadUV = corner;
+    out.spike = spike;
 
     if (u.colorMode == 1u) {
         out.color = velocityColor(length(p.vel)) * max(intensity, 0.4);
@@ -179,6 +193,7 @@ fn vs_particle(@builtin(vertex_index) vi : u32,
         out.color = blackbodyRGB(temp) * intensity;
     }
 
+    out.color *= flux;
     if (ii == u.selectedIdx) {
         out.color *= (1.0 - u.systemFade);   // the system's sun takes over
     }
@@ -187,10 +202,21 @@ fn vs_particle(@builtin(vertex_index) vi : u32,
 
 @fragment
 fn fs_particle(in : VSOut) -> @location(0) vec4f {
-    let d2 = dot(in.quadUV, in.quadUV);
-    if (d2 > 1.0) { discard; }
-    // Gaussian falloff; luminosity is already baked into the vertex color.
-    return vec4f(in.color * exp(-d2 * 3.5), 1.0);
+    // Point-spread: Gaussian core + wide dim halo (~9 % of the energy), same
+    // total energy as the old single Gaussian. Luminosity is in the color.
+    let p = in.quadUV * in.spike;
+    let px = fwidth(p.x);
+    let d2 = dot(p, p);
+    if (in.spike == 1.0 && d2 > 1.0) { discard; }
+    var f = 1.15 * exp(-d2 * 4.5) + 0.043 * exp(-d2 * 1.2);
+    if (in.spike > 1.0) {
+        // 4 spikes: narrow Gaussian across, exponential falloff along
+        let a = abs(p) / in.spike;
+        let along = (1.0 - a) * exp(-3.0 * a);
+        let w = max(0.08, 0.6 * px);
+        f += 0.15 * (along.x * exp(-p.y * p.y / (w * w)) + along.y * exp(-p.x * p.x / (w * w)));
+    }
+    return vec4f(in.color * f, 1.0);
 }
 
 // ── Dust extinction sprites ─────────────────────────────────────────────────
@@ -205,6 +231,12 @@ struct DustOut {
 }
 
 fn collapse() -> vec4f { return vec4f(0.0, 0.0, 2.0, 1.0); }  // clipped away
+
+// A world-space sprite that would cover over ~half the screen height
+// dissolves instead of blanking the view.
+fn nearFade(sizePx : f32) -> f32 {
+    return 1.0 - smoothstep(0.25, 0.6, sizePx / u.resolution.y);
+}
 
 @vertex
 fn vs_dust(@builtin(vertex_index) vi : u32,
@@ -229,11 +261,12 @@ fn vs_dust(@builtin(vertex_index) vi : u32,
     let worldSize = 2.2 + st.z * 6.0;
     let projScale = u.resolution.y / (2.0 * u.tanHalfFov);
     let sizePx = worldSize * projScale / max(clip.w, 0.1);
+    let fade = nearFade(sizePx);
     let corner = quad[vi];
     clip = vec4f(clip.xy + corner * (sizePx / u.resolution) * clip.w, clip.zw);
-    out.pos = clip;
+    out.pos = select(clip, collapse(), fade <= 0.0);
     out.quadUV = corner;
-    out.strength = st.w * u.dustStrength;
+    out.strength = st.w * u.dustStrength * fade;
     return out;
 }
 
@@ -277,11 +310,12 @@ fn vs_hii(@builtin(vertex_index) vi : u32,
     let worldSize = 3.0 + st.z * 4.0;
     let projScale = u.resolution.y / (2.0 * u.tanHalfFov);
     let sizePx = worldSize * projScale / max(clip.w, 0.1);
+    let fade = nearFade(sizePx);
     let corner = quad[vi];
     clip = vec4f(clip.xy + corner * (sizePx / u.resolution) * clip.w, clip.zw);
-    out.pos = clip;
+    out.pos = select(clip, collapse(), fade <= 0.0);
     out.quadUV = corner;
-    out.strength = u.hiiStrength;
+    out.strength = u.hiiStrength * fade;
     return out;
 }
 
@@ -306,6 +340,7 @@ fn vs_highlight(@builtin(vertex_index) vi : u32) -> VSOut {
         out.pos = collapse();
         out.quadUV = vec2f(0.0);
         out.color = vec3f(0.0);
+        out.spike = 1.0;
         return out;
     }
     var clip = u.viewProj * vec4f(0.0, 0.0, 0.0, 1.0);
@@ -314,14 +349,17 @@ fn vs_highlight(@builtin(vertex_index) vi : u32) -> VSOut {
     clip = vec4f(clip.xy + corner * (sizePx / u.resolution) * clip.w, clip.zw);
     out.pos = clip;
     out.quadUV = corner;
-    out.color = vec3f(0.35, 0.6, 1.0) * (1.0 - u.systemFade);
+    out.color = vec3f(0.6) * (1.0 - u.systemFade);
+    out.spike = 1.0;
     return out;
 }
 
 @fragment
 fn fs_highlight(in : VSOut) -> @location(0) vec4f {
+    // 1.5 px hairline: box-filtered coverage from the pixel distance to r = 0.8
     let d = length(in.quadUV);
-    let ring = smoothstep(0.10, 0.02, abs(d - 0.8)) * (0.75 + 0.25 * sin(u.time * 4.0));
+    let px = length(vec2f(dpdx(d), dpdy(d)));
+    let ring = clamp(1.25 - abs(d - 0.8) / px, 0.0, 1.0);
     if (d > 1.0 || ring < 0.01) { discard; }
     return vec4f(in.color * ring, 1.0);
 }
