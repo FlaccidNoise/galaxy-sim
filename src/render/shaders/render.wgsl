@@ -568,5 +568,9 @@ fn fs_composite(in : FSOut) -> @location(0) vec4f {
     let scene = textureSampleLevel(sceneTex, compSamp, in.uv, 0.0).rgb;
     let bloom = textureSampleLevel(bloomTex, compSamp, in.uv, 0.0).rgb;
     var hdr = (scene + bloom * comp.bloomStrength) * comp.exposure;
-    return vec4f(linearToSrgb(agx(hdr)), 1.0);
+    // ±1/255 triangular-PDF dither breaks 8-bit banding in dark bloom gradients:
+    // interleaved-gradient noise remapped from uniform to triangular.
+    let n = fract(52.9829189 * fract(dot(in.pos.xy, vec2f(0.06711056, 0.00583715)))) * 2.0 - 1.0;
+    let tri = sign(n) * (1.0 - sqrt(1.0 - abs(n)));
+    return vec4f(linearToSrgb(agx(hdr)) + tri / 255.0, 1.0);
 }
