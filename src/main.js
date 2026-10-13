@@ -27,6 +27,7 @@ let sfRho0 = 1;                // mean disk density — SF threshold reference
 let energyBaseline = null;     // first total-energy reading after restart
 let energyDrift = 0;
 let stepAccumulator = 0;
+let lastFrameTime = performance.now();
 let simTime = 0;
 let systemRenderer = null;
 const R_ENTER = 1.5;   // galaxy-camera radius where the system starts fading in
@@ -62,7 +63,21 @@ function updateStarInfo() {
   el.classList.add('visible');
 }
 
+// The galaxy renders in a frame centred on the selected star. When that frame
+// changes, shift the camera target by the star's snapshot position so the view
+// stays continuous; the damped camera then settles on the new origin.
+function shiftCameraTarget(idx, sign) {
+  if (!lastPositions) return;
+  for (let c = 0; c < 3; c++) {
+    const d = sign * lastPositions[idx * 4 + c];
+    camera.target[c] += d;
+    camera._goal.target[c] += d;
+  }
+}
+
 function select(idx, record) {
+  if (selection) shiftCameraTarget(selection.idx, 1);
+  shiftCameraTarget(idx, -1);
   selection = {
     idx,
     system: generateSystem(record[0], record[1], record[2]),
@@ -76,6 +91,7 @@ function select(idx, record) {
 
 function deselect() {
   if (!selection) return;
+  shiftCameraTarget(selection.idx, 1);
   selection = null;
   renderer.selectedIdx = 0xffffffff;
   renderer.systemFade = 0;
@@ -92,8 +108,9 @@ async function handlePick(x, y) {
   if (renderer.systemFade > 0) return;   // inside a system: clicks are not picks
   const mySim = sim;
   const dpr = devicePixelRatio || 1;
+  const origin = selection ? lastPositions.subarray(selection.idx * 4, selection.idx * 4 + 3) : undefined;
   const cands = pickCandidates(lastPositions, sim.N, camera.viewProj,
-                               x * dpr, y * dpr, renderer.width, renderer.height);
+                               x * dpr, y * dpr, renderer.width, renderer.height, 15, 4, origin);
   if (!cands.length) { deselect(); return; }
   const records = await readStellarRecords(gpuDevice, sim.stellarBuffer, cands.map(c => c.idx));
   if (sim !== mySim) return;
@@ -143,16 +160,21 @@ async function init(params) {
     gpuDevice.lost.then(info => fail(new Error(`GPU device lost: ${info.message}`)));
 
     const canvas = document.createElement('canvas');
-    canvas.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;';
+    canvas.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;touch-action:none;';
     (document.getElementById('sim') ?? document.body).appendChild(canvas);
 
     camera = new Camera(canvas);
 
-    let downX = 0, downY = 0;
-    canvas.addEventListener('pointerdown', e => { downX = e.clientX; downY = e.clientY; });
+    let downX = 0, downY = 0, pointersDown = 0, multiTouch = false;
+    canvas.addEventListener('pointerdown', e => {
+      if (pointersDown++ === 0) { downX = e.clientX; downY = e.clientY; multiTouch = false; }
+      else multiTouch = true;
+    });
+    canvas.addEventListener('pointercancel', () => { pointersDown = Math.max(pointersDown - 1, 0); });
     canvas.addEventListener('pointerup', e => {
-      // Click = left button released within 4 px of where it went down
-      if (e.button !== 0 || Math.hypot(e.clientX - downX, e.clientY - downY) > 4) return;
+      pointersDown = Math.max(pointersDown - 1, 0);
+      // Click = single left button/finger released within 4 px of where it went down
+      if (multiTouch || e.button !== 0 || Math.hypot(e.clientX - downX, e.clientY - downY) > 4) return;
       handlePick(e.clientX, e.clientY).catch(console.error);
     });
     document.addEventListener('keydown', e => {
@@ -215,6 +237,7 @@ async function init(params) {
   renderer.centralIdx = centralIdx;
   window.__sim = sim;  // debug/verification hooks
   window.__renderer = renderer;
+  window.__camera = camera;
   window.__dbg = () => ({ centralIdx, centralIdx2, haloPerGalaxy, sfRho0, simTime });
   window.__state = controls?.state;
   window.__restart = (over = {}) => {
@@ -254,13 +277,10 @@ function loop() {
     frameCount = 0;
     lastFPSTime = now;
   }
+  const dtWall = Math.min((now - lastFrameTime) / 1000, 0.1);
+  lastFrameTime = now;
 
-  if (selection && lastPositions) {
-    const i = selection.idx * 4;
-    camera._goal.target[0] = lastPositions[i];
-    camera._goal.target[1] = lastPositions[i + 1];
-    camera._goal.target[2] = lastPositions[i + 2];
-  }
+  if (selection) camera._goal.target.fill(0);   // the selected star is the origin; no panning off it
   camera.update();
 
   // Solar-system crossfade: below R_ENTER the system scene fades in and the
@@ -290,12 +310,13 @@ function loop() {
 
   const s = controls.state;
 
-  // Fractional speed: accumulate sub-step credits so speed < 1 skips steps
-  stepAccumulator += s.speed;
+  // Fractional speed: accumulate sub-step credits so speed < 1 skips steps.
+  // Wall-clock based: speed 1 = 60 steps/s at any display refresh rate.
+  stepAccumulator += s.speed * 60 * dtWall;
   // Cap steps/frame: physics quality degrades when many steps run against
-  // one (increasingly stale) tree snapshot.
+  // one (increasingly stale) tree snapshot. Credit beyond the cap is dropped.
   const stepsThisFrame = Math.min(Math.floor(stepAccumulator), 8);
-  stepAccumulator -= stepsThisFrame;
+  stepAccumulator = Math.min(stepAccumulator - stepsThisFrame, 1);
 
   const enc = gpuDevice.createCommandEncoder();
 

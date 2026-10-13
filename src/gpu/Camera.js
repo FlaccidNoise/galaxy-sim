@@ -2,7 +2,8 @@
  * Orbit camera with damping — replaces THREE.OrbitControls.
  * Produces a column-major viewProj matrix plus basis vectors for shaders.
  *
- * Left-drag: rotate · Right-drag / two-finger drag: pan · Wheel: zoom
+ * Left-drag / one finger: rotate · Right-drag / two-finger drag: pan
+ * Wheel / pinch: zoom
  */
 export class Camera {
   constructor(canvas) {
@@ -33,35 +34,59 @@ export class Camera {
 
   _bind() {
     const el = this.canvas;
-    let dragging = 0; // 1 = rotate, 2 = pan
-    let lastX = 0, lastY = 0;
+    const pointers = new Map();   // pointerId → last {x, y}
+    let mode = 1;                 // single pointer: 1 = rotate, 2 = pan
+
+    const pan = (dx, dy) => {
+      // Pan in screen plane, scaled by distance
+      const s = this._goal.radius * 0.0012;
+      const t = this._goal.target;
+      t[0] -= (dx * this.right[0] - dy * this.up[0]) * s;
+      t[1] -= (dx * this.right[1] - dy * this.up[1]) * s;
+      t[2] -= (dx * this.right[2] - dy * this.up[2]) * s;
+    };
+    const zoom = f => {
+      this._goal.radius = Math.min(Math.max(this._goal.radius * f, this.minRadius), 4000);
+    };
+    const pair = () => {
+      const [a, b] = pointers.values();
+      return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, d: Math.hypot(a.x - b.x, a.y - b.y) };
+    };
+    const release = e => pointers.delete(e.pointerId);
 
     el.addEventListener('contextmenu', e => e.preventDefault());
     el.addEventListener('pointerdown', e => {
-      dragging = e.button === 2 ? 2 : 1;
-      lastX = e.clientX; lastY = e.clientY;
+      if (pointers.size === 0) mode = e.button === 2 ? 2 : 1;
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       el.setPointerCapture(e.pointerId);
     });
-    el.addEventListener('pointerup', () => { dragging = 0; });
+    el.addEventListener('pointerup', release);
+    el.addEventListener('pointercancel', release);
     el.addEventListener('pointermove', e => {
-      if (!dragging) return;
-      const dx = e.clientX - lastX, dy = e.clientY - lastY;
-      lastX = e.clientX; lastY = e.clientY;
-      if (dragging === 1) {
-        this._goal.theta -= dx * 0.005;
-        this._goal.phi = Math.min(Math.max(this._goal.phi + dy * 0.005, -1.55), 1.55);
+      const p = pointers.get(e.pointerId);
+      if (!p) return;
+      if (pointers.size === 1) {
+        const dx = e.clientX - p.x, dy = e.clientY - p.y;
+        p.x = e.clientX; p.y = e.clientY;
+        if (mode === 1) {
+          this._goal.theta -= dx * 0.005;
+          this._goal.phi = Math.min(Math.max(this._goal.phi + dy * 0.005, -1.55), 1.55);
+        } else {
+          pan(dx, dy);
+        }
+      } else if (pointers.size === 2) {
+        const before = pair();
+        p.x = e.clientX; p.y = e.clientY;
+        const after = pair();
+        if (before.d > 0 && after.d > 0) zoom(before.d / after.d);
+        pan(after.x - before.x, after.y - before.y);
       } else {
-        // Pan in screen plane, scaled by distance
-        const s = this._goal.radius * 0.0012;
-        const t = this._goal.target;
-        t[0] -= (dx * this.right[0] - dy * this.up[0]) * s;
-        t[1] -= (dx * this.right[1] - dy * this.up[1]) * s;
-        t[2] -= (dx * this.right[2] - dy * this.up[2]) * s;
+        p.x = e.clientX; p.y = e.clientY;
       }
     });
     el.addEventListener('wheel', e => {
       e.preventDefault();
-      this._goal.radius = Math.min(Math.max(this._goal.radius * Math.exp(e.deltaY * 0.001), this.minRadius), 4000);
+      zoom(Math.exp(e.deltaY * 0.001));
     }, { passive: false });
   }
 

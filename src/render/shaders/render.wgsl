@@ -136,7 +136,8 @@ fn vs_particle(@builtin(vertex_index) vi : u32,
     let p = particles[ii];
     let st = stellar[ii];
 
-    var clip = u.viewProj * vec4f(p.pos, 1.0);
+    let origin = select(vec3f(0.0), particles[u.selectedIdx].pos, u.selectedIdx != 0xffffffffu);
+    var clip = u.viewProj * vec4f(p.pos - origin, 1.0);
 
     // Photometry from the stellar lifecycle (or BH / gas special cases)
     var temp : f32;
@@ -222,7 +223,8 @@ fn vs_dust(@builtin(vertex_index) vi : u32,
         return out;
     }
     let p = particles[ii];
-    var clip = u.viewProj * vec4f(p.pos, 1.0);
+    let origin = select(vec3f(0.0), particles[u.selectedIdx].pos, u.selectedIdx != 0xffffffffu);
+    var clip = u.viewProj * vec4f(p.pos - origin, 1.0);
     // world-space size: fat fuzzy blobs that overlap into lanes
     let worldSize = 2.2 + st.z * 6.0;
     let projScale = u.resolution.y / (2.0 * u.tanHalfFov);
@@ -270,7 +272,8 @@ fn vs_hii(@builtin(vertex_index) vi : u32,
         return out;
     }
     let p = particles[ii];
-    var clip = u.viewProj * vec4f(p.pos, 1.0);
+    let origin = select(vec3f(0.0), particles[u.selectedIdx].pos, u.selectedIdx != 0xffffffffu);
+    var clip = u.viewProj * vec4f(p.pos - origin, 1.0);
     let worldSize = 3.0 + st.z * 4.0;
     let projScale = u.resolution.y / (2.0 * u.tanHalfFov);
     let sizePx = worldSize * projScale / max(clip.w, 0.1);
@@ -305,8 +308,7 @@ fn vs_highlight(@builtin(vertex_index) vi : u32) -> VSOut {
         out.color = vec3f(0.0);
         return out;
     }
-    let p = particles[u.selectedIdx];
-    var clip = u.viewProj * vec4f(p.pos, 1.0);
+    var clip = u.viewProj * vec4f(0.0, 0.0, 0.0, 1.0);
     let corner = quad[vi];
     let sizePx = 26.0 * u.sizeScale;
     clip = vec4f(clip.xy + corner * (sizePx / u.resolution) * clip.w, clip.zw);

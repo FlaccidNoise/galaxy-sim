@@ -38,6 +38,16 @@ test('pickCandidates caps results at k', () => {
   assert.equal(pickCandidates(pos, 10, I, 50, 50, 100, 100, 15, 4).length, 4);
 });
 
+test('pickCandidates projects relative to origin', () => {
+  const pos = new Float32Array([
+    10, 10, 0, 1,      // − origin → (0, 0) → screen (50, 50)
+    0, 0, 0, 1,        // − origin → (−10, −10): off screen
+  ]);
+  const hits = pickCandidates(pos, 2, I, 50, 50, 100, 100, 15, 4, [10, 10, 0]);
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0].idx, 0);
+});
+
 test('remapIndex inverts a gather permutation', () => {
   const perm = new Uint32Array([2, 0, 1]);   // out[0]=in[2], out[1]=in[0], out[2]=in[1]
   assert.equal(remapIndex(perm, 2), 0);

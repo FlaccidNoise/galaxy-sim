@@ -49,6 +49,7 @@ AgX tone mapping.
 ## Controls
 
 - Drag to rotate, right-drag to pan, scroll to zoom, **H** toggles the panel.
+- Touch: one finger rotates, two fingers pinch to zoom and drag to pan, tap selects a star.
 - **Initial Conditions**: preset (disk / sphere / collision), N up to 500k,
   Toomre Q, arm count.
 - **Physics**: softening, timestep, BH opening angle θ, halo mass/scale, gas
