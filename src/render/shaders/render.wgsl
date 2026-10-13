@@ -37,6 +37,7 @@ struct VSOut {
     @location(0) quadUV : vec2f,   // [-1, 1] across the sprite
     @location(1) color  : vec3f,
     @location(2) spike  : f32,     // quad half-size in core radii (1 = no spikes)
+    @location(3) flux   : f32,     // near-field brightness gain for the core
 }
 
 // Planckian-locus blackbody color (Tanner Helland's fit to CIE data),
@@ -172,7 +173,7 @@ fn vs_particle(@builtin(vertex_index) vi : u32,
     let base = size * 150.0 / max(clip.w, d0);
     let sizePx = max(min(base * sqrt(near), max(base, 7.0)), 1.25) * u.sizeScale;
     let areaRatio = base * near * u.sizeScale / sizePx;
-    let flux = clamp(areaRatio * areaRatio, 1.0, 40.0);
+    let flux = clamp(areaRatio * areaRatio, 1.0, 12.0);
 
     // Giants, supernovae and O stars get diffraction spikes on a larger quad.
     let spike = select(1.0, clamp(96.0 * u.sizeScale / sizePx, 1.0, 4.0), lum > 2000.0);
@@ -184,6 +185,7 @@ fn vs_particle(@builtin(vertex_index) vi : u32,
     out.pos = clip;
     out.quadUV = corner;
     out.spike = spike;
+    out.flux = flux;
 
     if (u.colorMode == 1u) {
         out.color = velocityColor(length(p.vel)) * max(intensity, 0.4);
@@ -193,7 +195,6 @@ fn vs_particle(@builtin(vertex_index) vi : u32,
         out.color = blackbodyRGB(temp) * intensity;
     }
 
-    out.color *= flux;
     if (ii == u.selectedIdx) {
         out.color *= (1.0 - u.systemFade);   // the system's sun takes over
     }
@@ -204,17 +205,19 @@ fn vs_particle(@builtin(vertex_index) vi : u32,
 fn fs_particle(in : VSOut) -> @location(0) vec4f {
     // Point-spread: Gaussian core + wide dim halo (~9 % of the energy), same
     // total energy as the old single Gaussian. Luminosity is in the color.
+    // Near-field flux boosts the core; the halo gets only √flux so close
+    // neighbours don't wash the frame.
     let p = in.quadUV * in.spike;
     let px = fwidth(p.x);
     let d2 = dot(p, p);
     if (in.spike == 1.0 && d2 > 1.0) { discard; }
-    var f = 1.15 * exp(-d2 * 4.5) + 0.043 * exp(-d2 * 1.2);
+    var f = in.flux * 1.15 * exp(-d2 * 4.5) + sqrt(in.flux) * 0.043 * exp(-d2 * 1.2);
     if (in.spike > 1.0) {
         // 4 spikes: narrow Gaussian across, exponential falloff along
         let a = abs(p) / in.spike;
         let along = (1.0 - a) * exp(-3.0 * a);
         let w = max(0.08, 0.6 * px);
-        f += 0.15 * (along.x * exp(-p.y * p.y / (w * w)) + along.y * exp(-p.x * p.x / (w * w)));
+        f += in.flux * 0.15 * (along.x * exp(-p.y * p.y / (w * w)) + along.y * exp(-p.x * p.x / (w * w)));
     }
     return vec4f(in.color * f, 1.0);
 }
