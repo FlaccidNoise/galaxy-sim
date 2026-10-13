@@ -535,7 +535,7 @@ try {
 
   // H key — toggle controls sheet
   document.addEventListener('keydown', e => {
-    if (e.target.closest?.('input, select, textarea, button')) return;
+    if (e.target.closest?.('input, select, textarea')) return;
     if ((e.key === 'h' || e.key === 'H') && !e.ctrlKey && !e.altKey && !e.metaKey) controls.toggle();
   });
 
