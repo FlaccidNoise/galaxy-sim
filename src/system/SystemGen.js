@@ -18,8 +18,12 @@ export const KIND = { SUN: 0, SCORCHED: 1, VENUSIAN: 2, TERRAN: 3, ICY: 4, GAS: 
 // Sim-time units; inner planets complete an orbit in ~10 s of real time
 const ORBIT_SPEED = 0.08;
 
+// Keplerian, but capped: the fastest planet in any system takes at least ~6 s
+// of real time per orbit (0.6 sim units/s), so tight red-dwarf orbits stay watchable.
+const MAX_RATE = 1.75;
+
 export function orbitRate(a) {
-  return 2 * Math.PI * ORBIT_SPEED / Math.pow(a, 1.5);
+  return Math.min(2 * Math.PI * ORBIT_SPEED / Math.pow(a, 1.5), MAX_RATE);
 }
 
 /**
@@ -109,7 +113,7 @@ export function generateSystem(stellarMass, birthTime, seed) {
     for (let m = 0; m < nMoons; m++) {
       planet.moons.push({
         a: ma, phase: rand() * 2 * Math.PI,
-        rate: orbitRate(ma) * 8,      // fast — visible motion at moon scale
+        rate: Math.min(orbitRate(ma) * 8, 2 * MAX_RATE),   // fast, but at most ~3 s per orbit
         radius: radius * (0.12 + 0.15 * rand()),
       });
       ma *= 1.6 + 0.4 * rand();
