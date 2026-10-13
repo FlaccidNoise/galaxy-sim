@@ -36,8 +36,8 @@ struct VSOut {
     @builtin(position) pos : vec4f,
     @location(0) quadUV : vec2f,   // [-1, 1] across the sprite
     @location(1) color  : vec3f,
-    @location(2) spike  : f32,     // quad half-size in core radii (1 = no spikes)
-    @location(3) flux   : f32,     // near-field brightness gain for the core
+    @location(2) @interpolate(flat) spike : f32,   // quad half-size in core radii (1 = no spikes)
+    @location(3) @interpolate(flat) flux  : f32,   // near-field brightness gain for the core
 }
 
 // Planckian-locus blackbody color (Tanner Helland's fit to CIE data),
@@ -160,7 +160,8 @@ fn vs_particle(@builtin(vertex_index) vi : u32,
     // Perceptual luminosity compression: full L spans ~1e-4..1e4+, which
     // additive blending can't take raw. L^0.55 keeps giants dominant
     // without nuking the frame; AgX rolls off the rest.
-    let intensity = pow(max(lum, 1e-5), 0.55) * u.starIntensity;
+    // The backdrop dims as a solar system fades in, so the page text stays readable
+    let intensity = pow(max(lum, 1e-5), 0.55) * u.starIntensity * (1.0 - 0.6 * u.systemFade);
 
     // Sprite size grows slowly with brightness; supernovae get big.
     // Beyond d0 the sprite shrinks as 1/d (far-field look). Inside d0 a star

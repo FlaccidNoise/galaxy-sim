@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#0a0a0b">
   <title>Galaxy, Josh Taylor</title>
+  <link rel="icon" href="data:,">
 
   <style>
     :root {
@@ -17,6 +18,8 @@
       --edge: clamp(18px, 2.4vw, 36px);
       --quiet: .66;
       --line: rgba(241, 237, 227, .18);
+      --track: rgba(241, 237, 227, .34);
+      --hover: rgba(241, 237, 227, .04);
       --disp: clamp(2.4rem, min(6.6vw, 14vh), 7rem);
       --railw: 180px;
       --sheetw: 360px;
@@ -132,12 +135,12 @@
     summary b { font-weight: 400; opacity: var(--quiet); }
     summary::after { content: '+'; margin-left: auto; opacity: var(--quiet); }
     details[open] > summary::after { content: '−'; }
-    summary:hover { background: rgba(241, 237, 227, .04); }
+    summary:hover { background: var(--hover); }
     summary:focus-visible { outline-offset: -2px; }
     #about { min-height: calc(100% + var(--edge)); border-bottom: 1px solid var(--line); }
     #about p { padding: 0 16px 1em; }
     #about p:first-of-type { padding-top: 6px; }
-    #about a { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; text-underline-offset: 3px; }
+    #about a { display: inline-block; padding: 15px 0; font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; text-underline-offset: 3px; }
 
     .row {
       display: grid; grid-template-columns: 19ch 7ch 1fr; column-gap: 12px; align-items: center;
@@ -149,31 +152,31 @@
     .row > select { grid-column: 2 / -1; }
     .row.act { display: block; padding: 12px 16px; }
     .row.tog { cursor: pointer; }
-    .row.tog:hover { background: rgba(241, 237, 227, .04); }
+    .row.tog:hover { background: var(--hover); }
     .row.tog:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
     .state { grid-column: 2; text-align: right; }
     .state::after { content: 'Off'; opacity: var(--quiet); }
     .tog input:checked + .state::after { content: 'On'; opacity: 1; }
 
     input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 44px; background: transparent; cursor: pointer; }
-    input[type=range]::-webkit-slider-runnable-track { height: 1px; background: rgba(241, 237, 227, .34); }
+    input[type=range]::-webkit-slider-runnable-track { height: 1px; background: var(--track); }
     input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 3px; height: 16px; margin-top: -8px; background: var(--accent); border: 0; border-radius: 0; }
-    input[type=range]::-moz-range-track { height: 1px; background: rgba(241, 237, 227, .34); }
+    input[type=range]::-moz-range-track { height: 1px; background: var(--track); }
     input[type=range]::-moz-range-thumb { width: 3px; height: 16px; border: 0; border-radius: 0; background: var(--accent); }
     input[type=range]:hover::-webkit-slider-thumb, input[type=range]:active::-webkit-slider-thumb { width: 5px; }
     input[type=range]:hover::-moz-range-thumb, input[type=range]:active::-moz-range-thumb { width: 5px; }
     input[type=range]:focus-visible { outline-offset: -2px; }
 
     select {
-      -webkit-appearance: none; appearance: none; width: 100%; height: 32px; padding: 0 20px 0 0;
+      -webkit-appearance: none; appearance: none; width: 100%; height: 44px; padding: 0 20px 0 0;
       background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='5'%3E%3Cpath d='M0 .5l4.5 4 4.5-4' fill='none' stroke='%23f1ede3'/%3E%3C/svg%3E") no-repeat right 2px center;
       color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit;
       border: 0; border-bottom: 1px solid var(--line); border-radius: 0; cursor: pointer;
     }
     select:hover { border-bottom-color: var(--paper); }
-    select option { background: #131314; color: #f1ede3; }
+    select option { background: var(--ink); color: var(--paper); }
 
-    .btn { width: 100%; min-height: 44px; background: transparent; color: inherit; border: 1px solid rgba(241, 237, 227, .34); border-radius: 0; cursor: pointer; }
+    .btn { width: 100%; min-height: 44px; background: transparent; color: inherit; border: 1px solid var(--track); border-radius: 0; cursor: pointer; }
     .btn:hover { border-color: var(--paper); }
     .btn:active { background: var(--paper); color: var(--ink); }
 
@@ -189,7 +192,7 @@
       #sheet-fps { opacity: var(--quiet); font-variant-numeric: tabular-nums; }
       .p-top .lnk { min-height: 44px; margin: 0; padding: 0 16px; }
       .tr .lnk, .tl a { display: inline-flex; align-items: center; min-height: 44px; padding: 0; margin-top: -14px; margin-bottom: -14px; }
-      .tr .lnk { margin-left: 1.6em; }
+      .tr .lnk { margin-left: 1.6em; min-width: 44px; justify-content: center; }
     }
     /* A phone upright: the sheet rises from the bottom */
     @media (max-width: 768px) and (min-height: 481px) {
@@ -254,7 +257,7 @@
         <i style="background:#9bb0ff"></i><i style="background:#aabfff"></i><i style="background:#cad7ff"></i><i style="background:#f8f7ff"></i><i style="background:#fff4ea"></i><i style="background:#ffd2a1"></i><i style="background:#ffcc6f"></i>
       </div>
       <div class="sc-scale" aria-hidden="true"><span>O</span><span>B</span><span>A</span><span>F</span><span>G</span><span>K</span><span>M</span></div>
-      <div class="sc-hint"><span class="for-mouse">Scroll in to visit. Esc to release.</span><span class="for-touch">Pinch in to visit. Tap empty sky to release.</span></div>
+      <div class="sc-hint"><span class="for-mouse">Scroll in to visit. Esc to release.</span><span class="for-touch">Pinch in to visit. Tap sky to release.</span></div>
     </div>
     <div>
       <div id="caption" aria-hidden="true"><span id="cap-n">25,000</span> stars, <span id="cap-t">0.0</span> Gyr.</div>
@@ -270,9 +273,9 @@
   <aside id="panel" aria-label="Controls">
     <div class="p-top"><span id="sheet-fps"></span><button type="button" id="sheet-close" class="lnk">Close</button></div>
     <details open id="about"><summary><b>05</b>About</summary>
-      <p>At McMaster I simulated a galaxy in Fortran 90 and watched a star cluster form its own spiral arms. This is the same idea again, in a browser tab, where you can turn it over with a mouse.</p>
+      <p>At McMaster I simulated a galaxy in Fortran 90 and watched a star cluster form its own spiral arms. This is the same idea again, in a browser tab, where you can turn it over.</p>
       <p>Every star pulls on every other. A Barnes-Hut tree groups the far ones, and the graphics card does the work through WebGPU. About 30% of the disc is gas that cools, settles thin, and turns into new stars where it gets dense. The heaviest stars end as supernovae and hand their matter back to the gas.</p>
-      <p>Click a star and keep zooming, and the view crosses into that star's own solar system.</p>
+      <p>Pick a star and keep zooming, and the view crosses into that star's own solar system. Pick a planet there to orbit it.</p>
       <p><a href="https://github.com/FlaccidNoise/galaxy-sim" target="_blank" rel="noopener">Source</a></p>
     </details>
   </aside>

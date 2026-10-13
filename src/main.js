@@ -15,10 +15,7 @@ let readbackInFlight = false;  // GPU staging map pending
 let workerBusy = false;        // tree build in progress
 let pendingTree = null;        // {tree, numNodes, perm, centralIdx, …} awaiting GPU application
 let centralIdx = 0;            // current index of galaxy A's central particle
-let lastPositions = null;   // retained CPU snapshot (vec4/particle) for picking
-// Snapshot lags the GPU by up to one rebuild cycle: between a perm application
-// and the next readback, indices refer to pre-perm order (picking may hit a
-// Morton-neighbor; self-corrects on next snapshot).
+let lastPositions = null;   // retained CPU snapshot (vec4/particle) in GPU order, for picking
 let selection = null;       // { idx, system }
 let centralIdx2 = -1;          // galaxy B's central (Collision preset), -1 = none
 let haloPerGalaxy = 0;         // halo mass per halo for this preset (0 = off)
@@ -81,8 +78,9 @@ function updateStarInfo() {
   el.querySelectorAll('.sc-bar i, .sc-scale span').forEach((n, i) => n.classList.toggle('on', i % 7 === lit));
   const b = focusIdx ? bodyPositions(selection.system, 0)[focusIdx] : null;
   const focused = b && `Focused: ${KIND_NAME[b.planet.kind]}${b.moon ? ' moon' : ''}, ${b.planet.a.toFixed(2)} AU.\n`;
-  scHintEls[0].textContent = focused ? focused + 'Esc to release.' : scHintText[0];
-  scHintEls[1].textContent = focused ? focused + 'Tap empty sky to release.' : scHintText[1];
+  const inSys = renderer.systemFade > 0;
+  scHintEls[0].textContent = focused ? focused + 'Esc to release.' : inSys ? 'Esc to leave.' : scHintText[0];
+  scHintEls[1].textContent = focused ? focused + 'Tap sky to release.' : inSys ? 'Tap sky to leave.' : scHintText[1];
   el.classList.add('visible');
 }
 
@@ -115,13 +113,13 @@ function setFocus(i) {
   updateStarInfo();
 }
 
-// Nearest body whose projected disc, or an 18 px target, covers the click; the star on a miss.
+// Nearest body whose projected disc, or an 18 px target, covers the click; -1 on a miss.
 function pickBody(x, y) {
   const dpr = devicePixelRatio || 1;
   const px = x * dpr, py = y * dpr, W = renderer.width, H = renderer.height;
   const m = systemRenderer.viewProj;
   const tanHalf = Math.tan(camera.fovY / 2);
-  let best = 0, bestD = Infinity;
+  let best = -1, bestD = Infinity;
   bodyPositions(selection.system, systemTime).forEach(({ pos: [bx, by, bz], radius }, i) => {
     const w = m[3] * bx + m[7] * by + m[11] * bz + m[15];
     if (w <= 0) return;
@@ -165,7 +163,13 @@ function deselect() {
 }
 
 async function handlePick(x, y) {
-  if (selection && renderer.systemFade > 0) { setFocus(pickBody(x, y)); return; }
+  if (selection && renderer.systemFade > 0) {
+    const b = pickBody(x, y);
+    if (b >= 0) setFocus(b);
+    else if (focusIdx) setFocus(0);
+    else deselect();
+    return;
+  }
   if (!sim?.ready || !lastPositions) return;
   const mySim = sim;
   const dpr = devicePixelRatio || 1;
@@ -253,7 +257,7 @@ async function init(params) {
   // Tear down previous sim + worker state
   deselect();
   lastPositions = null;
-  if (sim) { const old = sim; sim = null; old.destroy(); renderer?.clearSceneCache(); }
+  if (sim) { const old = sim; sim = null; old.destroy(); renderer?.clearSceneCache(); camera.home(); }
   if (treeWorker) { treeWorker.terminate(); treeWorker = null; }
   readbackInFlight = false;
   workerBusy = false;
@@ -380,6 +384,7 @@ function loop() {
     sysUiShown = sysUi;
     document.getElementById('star-info').classList.toggle('in-system', sysUi === 2);
     hintEls.forEach((n, i) => { n.textContent = hintText[sysUi > 0 ? 1 : 0][i]; });
+    updateStarInfo();
   }
 
   if (!sim || !sim.ready || controls?.state.paused) {
@@ -394,9 +399,11 @@ function loop() {
   const s = controls.state;
 
   // Fractional speed: accumulate sub-step credits so speed < 1 skips steps.
-  // Wall-clock based: speed 1 = 60 steps/s at any display refresh rate.
-  // The galaxy slows to a stop as a solar system fades in
-  stepAccumulator += s.speed * 60 * dtWall * (1 - renderer.systemFade);
+  // Wall-clock based: speed 1 = 60 steps/s at any refresh rate at or above
+  // 60 Hz. Below that, a slow frame earns at most `speed` steps, so a slow
+  // frame cannot demand more steps and slow the next one further.
+  // The galaxy slows to a stop as a solar system fades in.
+  stepAccumulator += s.speed * 60 * Math.min(dtWall, 1 / 60) * (1 - renderer.systemFade);
   // Cap steps/frame: physics quality degrades when many steps run against
   // one (increasingly stale) tree snapshot. Credit beyond the cap is dropped.
   const stepsThisFrame = Math.min(Math.floor(stepAccumulator), 8);
@@ -429,6 +436,15 @@ function loop() {
       const ni = remapIndex(pendingTree.perm, selection.idx);
       if (ni >= 0) { selection.idx = ni; renderer.selectedIdx = ni; }
       else deselect();
+    }
+    // Keep the CPU snapshot in GPU order so picking and frame shifts read the right star
+    if (lastPositions && lastPositions.length === pendingTree.perm.length * 4) {
+      const perm = pendingTree.perm, src = lastPositions, dst = new Float32Array(src.length);
+      for (let i = 0; i < perm.length; i++) {
+        const o = i * 4, q = perm[i] * 4;
+        dst[o] = src[q]; dst[o + 1] = src[q + 1]; dst[o + 2] = src[q + 2]; dst[o + 3] = src[q + 3];
+      }
+      lastPositions = dst;
     }
     // Drift the halo centres toward the BH positions (EMA: follows the
     // galaxy's orbit, ignores the BH's encounter jitter)
@@ -519,9 +535,12 @@ try {
 
   // H key — toggle controls sheet
   document.addEventListener('keydown', e => {
+    if (e.target.closest?.('input, select, textarea, button')) return;
     if ((e.key === 'h' || e.key === 'H') && !e.ctrlKey && !e.altKey && !e.metaKey) controls.toggle();
   });
 
+  frameCount = 0;
+  lastFPSTime = lastFrameTime = performance.now();
   loop();
 } catch (err) {
   fail(err);

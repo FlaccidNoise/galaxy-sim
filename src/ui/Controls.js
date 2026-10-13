@@ -78,7 +78,7 @@ export class Controls {
       { key: 'haloFactor', label: 'Halo mass ×M⋆', min: 0, max: 10, step: 0.1, restart: true },
       { key: 'haloScale', label: 'Halo scale ×R', min: 0.3, max: 4, step: 0.1, restart: true },
       { key: 'gasDrag', label: 'Gas cooling', min: 0, max: 1, step: 0.01 },
-      { key: 'sfEff', label: 'SF efficiency', min: 0, max: 1, step: 0.01 },
+      { key: 'sfEff', label: 'SF efficiency', min: 0, max: 1, step: 0.001 },
       { key: 'sfThreshold', label: 'SF threshold ×<i>ρ̄</i>', min: 0.5, max: 10, step: 0.1 },
       // Display — drives renderer directly
       { section: 'Display', key: 'colorMode', label: 'Colour mode', options: Object.keys(COLOR_MODES).map(k => [k, k]),

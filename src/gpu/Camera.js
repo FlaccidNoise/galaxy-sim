@@ -17,7 +17,9 @@ export class Camera {
     this.theta = 0;            // azimuth
     // Disk lies in the XY plane (normal = +Z); phi=0 is face-on, π/2 edge-on.
     this.phi = 0.85;           // ~49° inclination: classic galaxy-photo angle
-    this.radius = 130;
+    // Home distance: the disc fills a landscape view; a portrait phone pulls back so it still fits
+    this.homeRadius = 130 / Math.min(canvas.clientWidth / Math.max(canvas.clientHeight, 1), 1);
+    this.radius = this.homeRadius;
     this.minRadius = 2;        // zoom floor — drops to 0.02 while a star is selected
     this._goal = { theta: this.theta, phi: this.phi, radius: this.radius, target: [...this.target] };
 
@@ -116,6 +118,12 @@ export class Camera {
     const aspect = this.canvas.clientWidth / Math.max(this.canvas.clientHeight, 1);
     this.aspect = aspect;
     makeViewProj(this.viewProj, this.position, r, u, f, this.fovY, aspect, this.near, this.far);
+  }
+
+  /** Back to the home view (restart): origin target, home distance, same orientation. */
+  home() {
+    this._goal.radius = this.homeRadius;
+    this._goal.target = [0, 0, 0];
   }
 
   setMinRadius(r) {

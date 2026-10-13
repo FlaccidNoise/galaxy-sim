@@ -51,8 +51,11 @@ AgX tone mapping.
 - Drag to rotate, right-drag to pan, scroll to zoom.
 - **Controls** (top right) or **H** opens the control sheet. On a wide screen
   the rail on the right lists its sections and About. Click one to open the
-  sheet at that section. Esc closes the sheet, or releases the selected star
-  when the sheet is closed. **Reset** restarts the simulation.
+  sheet at that section. **Reset** restarts the simulation.
+- Click a star to select it and keep zooming to enter its solar system. Inside,
+  click a planet or moon to orbit it; the zoom floor keeps the camera outside
+  the body. Esc steps back one level at a time: planet focus, then the open
+  sheet, then the selected star. Clicking empty sky does the same.
 - While you are inside a solar system the galaxy stops, and the planets keep
   their own pace whatever the galaxy's speed or pause.
 - Touch: one finger rotates, two fingers pinch to zoom and drag to pan, tap selects a star.
@@ -72,12 +75,15 @@ AgX tone mapping.
 ```
 src/main.js                  frame loop, worker orchestration, HUD
 src/ui/Controls.js           control sheet built from a schema of native inputs
-src/gpu/Camera.js            damped orbit camera
+src/ui/StarSelection.js      click picking and permutation remap
+src/system/SystemGen.js      deterministic solar-system generator
+src/gpu/Camera.js            damped orbit camera, pointer and touch gestures
 src/physics/NBodyGPU.js      compute pipelines (force, refresh, SF, sort)
 src/physics/mortonTree.js    Morton codes, radix sort, BFS bucketed tree
 src/physics/bhWorker.js      async topology rebuild worker
 src/physics/shaders/         WGSL compute kernels
 src/render/RendererGPU.js    HDR render graph
+src/render/SystemRenderer.js solar-system scene (impostor spheres, rings, belt)
 src/render/shaders/          WGSL render kernels
 docs/plans/                  historical design documents (pre-rewrite)
 ```
