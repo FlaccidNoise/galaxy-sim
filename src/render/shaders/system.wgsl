@@ -129,10 +129,21 @@ fn oval(n : vec3f, z0 : f32, lon0 : f32, size : f32) -> vec2f {
     return vec2f(1.0 - smoothstep(0.6, 1.0, q), smoothstep(0.7, 0.95, q) * (1.0 - smoothstep(0.95, 1.2, q)));
 }
 
+// Gas-giant band palettes (zone, belt): Jupiter ochre, Saturn cream, salmon,
+// slate, and the cold teal that outer giants fade toward
+const GIANT_ZONE = array<vec3f, 5>(
+    vec3f(0.52, 0.39, 0.22), vec3f(0.54, 0.45, 0.27), vec3f(0.54, 0.30, 0.21),
+    vec3f(0.34, 0.35, 0.38), vec3f(0.17, 0.35, 0.42),
+);
+const GIANT_BELT = array<vec3f, 5>(
+    vec3f(0.29, 0.13, 0.05), vec3f(0.39, 0.29, 0.14), vec3f(0.34, 0.12, 0.08),
+    vec3f(0.17, 0.18, 0.21), vec3f(0.04, 0.13, 0.26),
+);
+
 // Surface albedo (rgb) and ocean mask (a) as a function of the unit
 // sphere-surface point in the body frame (pole = +Z) — this is the piece that
 // ports unchanged to a terrain-mesh pipeline for surface zoom.
-fn surfaceColor(kind : u32, n : vec3f, look : vec4f, t : f32) -> vec4f {
+fn surfaceColor(kind : u32, n : vec3f, look : vec4f, t : f32, cold : f32) -> vec4f {
     let sp = n * 3.0 + vec3f(look.x * 91.7);   // seed offsets the noise domain
     switch kind {
         case 1u: {   // scorched rock
@@ -143,15 +154,20 @@ fn surfaceColor(kind : u32, n : vec3f, look : vec4f, t : f32) -> vec4f {
             let haze = fbm(vec3f(sp.xy * 0.8, n.z * 3.0) + warp * 1.5);
             return vec4f(mix(vec3f(0.78, 0.66, 0.40), vec3f(0.95, 0.88, 0.68), haze), 0.0);
         }
-        case 3u: {   // terran: oceans, continents, ice caps (clouds are a separate layer)
+        case 3u: {   // terran: altitude-shaded continents, shelf seas, snow line, polar caps
             let h = fbm(sp);
-            let water = look.y * 0.35 + 0.35;
-            var col = mix(vec3f(0.10, 0.30, 0.12), vec3f(0.45, 0.38, 0.22), fbm(sp * 2.7));
-            col = mix(col, mix(vec3f(0.01, 0.05, 0.18), vec3f(0.02, 0.12, 0.30), h / max(water, 0.01)),
-                      step(h, water));
-            let cap = smoothstep(0.78, 0.92, abs(n.z));
+            let water = 0.47 + 0.1 * look.y;   // ~50–80 % ocean
+            let e = clamp((h - water) / 0.2, 0.0, 1.0);
+            let lat = abs(n.z);
+            var col = mix(vec3f(0.14, 0.19, 0.08), vec3f(0.46, 0.39, 0.26), smoothstep(0.4, 0.6, fbm(sp * 2.7)));
+            col = mix(col, vec3f(0.33, 0.26, 0.17), smoothstep(0.2, 0.5, e));
+            col = mix(col, vec3f(0.42, 0.40, 0.37), smoothstep(0.5, 0.7, e));
+            col = mix(col, vec3f(0.90, 0.92, 0.95), smoothstep(0.7, 0.8, e + lat * 0.6));   // snow line drops poleward
+            let sea = 1.0 - smoothstep(water - 0.005, water + 0.005, h);
+            col = mix(col, mix(vec3f(0.04, 0.20, 0.28), vec3f(0.01, 0.04, 0.13), smoothstep(0.0, 0.04, water - h)), sea);
+            let cap = smoothstep(0.8, 0.92, lat);
             col = mix(col, vec3f(0.90, 0.92, 0.95), cap);
-            return vec4f(col, (1.0 - smoothstep(water - 0.01, water + 0.01, h)) * (1.0 - cap));
+            return vec4f(col, sea * (1.0 - cap));
         }
         case 4u: {   // icy
             return vec4f(mix(vec3f(0.55, 0.62, 0.70), vec3f(0.85, 0.90, 0.95), fbm(sp)), 0.0);
@@ -162,10 +178,16 @@ fn surfaceColor(kind : u32, n : vec3f, look : vec4f, t : f32) -> vec4f {
             let freq = 5.0 + look.z * 6.0;
             let belts = 0.5 + 0.5 * sin(z * freq * 3.14159 + look.x * 6.2831853);
             let fine = fbm(vec3f(sp.xy * 0.35, z * freq * 3.0) + warp);
-            let dark = mix(vec3f(0.50, 0.32, 0.20), vec3f(0.45, 0.40, 0.32), look.y);
-            var col = mix(dark, vec3f(0.88, 0.80, 0.66), clamp(belts * 0.7 + fine * 0.5 - 0.1, 0.0, 1.0));
+            let f = look.y * 3.999;
+            let i = u32(f);
+            let j = min(i + 1u, 3u);
+            let b = smoothstep(0.7, 1.0, fract(f));
+            let zone = mix(mix(GIANT_ZONE[i], GIANT_ZONE[j], b), GIANT_ZONE[4], cold);
+            let belt = mix(mix(GIANT_BELT[i], GIANT_BELT[j], b), GIANT_BELT[4], cold);
+            let contrast = 0.1 + 0.4 * fract(look.x * 13.7);
+            var col = mix(zone, belt, (1.0 - clamp(belts * 0.7 + fine * 0.5 - 0.1, 0.0, 1.0)) * min(contrast * 2.5, 1.0));
             let s1 = oval(n, -0.35 + 0.3 * look.y, look.z * 6.2831853, 0.07 + 0.05 * look.y);
-            col = mix(col, mix(vec3f(0.78, 0.40, 0.25), vec3f(0.92, 0.88, 0.80), step(0.6, look.x)), s1.x);
+            col = mix(col, select(zone * 1.08, vec3f(0.72, 0.30, 0.18), fract(look.x * 7.3) < 0.45), s1.x);
             col *= 1.0 - 0.3 * s1.y;
             if (look.y > 0.4) {
                 let s2 = oval(n, 0.4 - 0.2 * look.z, look.x * 6.2831853 + 2.0, 0.04);
@@ -177,8 +199,8 @@ fn surfaceColor(kind : u32, n : vec3f, look : vec4f, t : f32) -> vec4f {
             let warp = fbm(sp + vec3f(t * 0.003, 0.0, 0.0));
             let z = n.z + (warp - 0.5) * 0.1;
             let bands = fbm(vec3f(sp.xy * 0.3, z * 8.0));
-            var col = mix(mix(vec3f(0.18, 0.38, 0.58), vec3f(0.42, 0.68, 0.85), bands),
-                          mix(vec3f(0.45, 0.70, 0.75), vec3f(0.62, 0.85, 0.88), bands), look.y);
+            var col = mix(mix(vec3f(0.36, 0.64, 0.70), vec3f(0.42, 0.72, 0.78), bands),
+                          mix(vec3f(0.03, 0.09, 0.38), vec3f(0.05, 0.14, 0.48), bands), look.y);   // pale cyan → deep azure
             col = mix(col, vec3f(0.75, 0.85, 0.90), smoothstep(0.75, 0.95, abs(z)) * 0.5);
             col = mix(col, col * 0.45, oval(n, -0.3, look.z * 6.2831853, 0.06).x * step(look.y, 0.5));
             return vec4f(col, 0.0);
@@ -194,8 +216,9 @@ fn surfaceColor(kind : u32, n : vec3f, look : vec4f, t : f32) -> vec4f {
 // Cloud cover drifting around the pole; the surface beneath stays fixed
 fn clouds(n : vec3f, seed : f32, t : f32) -> f32 {
     let a = t * 0.012;
-    let p = vec3f(n.x * cos(a) - n.y * sin(a), n.x * sin(a) + n.y * cos(a), n.z) * 4.0 + vec3f(seed * 53.1);
-    return smoothstep(0.5, 0.72, fbm(p + fbm(p * 0.5) * 1.8));
+    let p = vec3f(n.x * cos(a) - n.y * sin(a), n.x * sin(a) + n.y * cos(a), n.z) * 6.0 + vec3f(seed * 53.1);
+    let mid = 0.501 - 0.058 * fract(seed * 5.3);   // 40–60 % cover
+    return smoothstep(mid - 0.08, mid + 0.08, fbm(p + fbm(p * 0.5) * 1.8));
 }
 
 // Atmosphere tint (rgb) and strength (a); a = 0 means airless
@@ -203,7 +226,7 @@ fn atmoTint(kind : u32) -> vec4f {
     switch kind {
         case 2u: { return vec4f(1.00, 0.90, 0.65, 0.9); }   // venusian: yellow-white
         case 3u: { return vec4f(0.35, 0.60, 1.00, 1.0); }   // terran: Rayleigh blue
-        case 5u: { return vec4f(0.85, 0.80, 0.70, 0.5); }   // gas giant: pale
+        case 5u: { return vec4f(0.80, 0.82, 0.85, 0.5); }   // gas giant: pale, neutral across palettes
         case 6u: { return vec4f(0.40, 0.85, 1.00, 0.8); }   // ice giant: cyan
         default: { return vec4f(0.0); }
     }
@@ -307,7 +330,8 @@ fn fs_body(in : BodyVSOut) -> BodyFSOut {
         let limb = 1.0 - 0.7 * (1.0 - mu);
         let gran = 0.5 + 0.8 * smoothstep(0.3, 0.7, fbm(n * 40.0 + vec3f(0.0, 0.0, su.time * 0.03)));
         let spots = 1.0 - 0.85 * smoothstep(0.66, 0.76, fbm(n * 2.5 + vec3f(17.3)));
-        let col = blackbodyRGB(su.starTemp * (0.7 + 0.3 * mu)) * 12.0 * limb * gran * spots;
+        let bb = blackbodyRGB(su.starTemp * (0.7 + 0.3 * mu));
+        let col = bb * bb * 3.0 * limb * gran * spots;   // squared: keeps the tint through AgX's path to white
         out.color = vec4f(col * su.fade, su.fade);
         return out;
     }
@@ -325,7 +349,9 @@ fn fs_body(in : BodyVSOut) -> BodyFSOut {
         }
     }
     let nb = n * frame;   // world → body frame
-    let surf = surfaceColor(in.kind, nb, in.look, su.time);
+    // Distance past the frost line (2.7·√L, with SystemGen's L and T from mass): colder giants turn bluer
+    let cold = smoothstep(2.5, 7.0, length(in.center) / (2.7 * pow(su.starTemp / 5778.0, 3.2407)));
+    let surf = surfaceColor(in.kind, nb, in.look, su.time, cold);
     var albedo = surf.rgb;
     var ns = n;
     if (in.kind == 1u || in.kind == 7u) {   // airless: bump-shaded craters
