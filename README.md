@@ -48,7 +48,10 @@ AgX tone mapping.
 
 ## Controls
 
-- Drag to rotate, right-drag to pan, scroll to zoom, **H** toggles the panel.
+- Drag to rotate, right-drag to pan, scroll to zoom.
+- **Controls** (top right) or **H** opens the control sheet. Esc closes it,
+  or releases the selected star when the sheet is closed. **About** shows a
+  short summary, **Reset** restarts the simulation.
 - Touch: one finger rotates, two fingers pinch to zoom and drag to pan, tap selects a star.
 - **Initial Conditions**: preset (disk / sphere / collision), N up to 500k,
   Toomre Q, arm count.
@@ -56,14 +59,16 @@ AgX tone mapping.
   cooling, star-formation efficiency and threshold.
 - **Display**: aging rate (Myr per time unit; 0 freezes stellar evolution),
   exposure, bloom, dust, nebulae.
-- HUD (bottom-left) shows fps, N, and total-energy drift. Negative drift is
+- The caption (bottom left) shows the star count and elapsed time in Gyr.
+  The line under it shows fps, N, and total-energy drift. Negative drift is
   gas cooling; slow positive drift at low N is two-body relaxation (each
   particle stands in for ~10⁴ stars) and shrinks as N grows.
 
 ## Layout
 
 ```
-src/main.js                  frame loop, worker orchestration
+src/main.js                  frame loop, worker orchestration, HUD
+src/ui/Controls.js           control sheet built from a schema of native inputs
 src/gpu/Camera.js            damped orbit camera
 src/physics/NBodyGPU.js      compute pipelines (force, refresh, SF, sort)
 src/physics/mortonTree.js    Morton codes, radix sort, BFS bucketed tree

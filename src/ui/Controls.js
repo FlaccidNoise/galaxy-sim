@@ -1,6 +1,9 @@
-import GUI from 'lil-gui';
-
 const COLOR_MODES = { 'Spectral': 0, 'Velocity': 1, 'Mass': 2 };
+
+function fmt(c, v) {
+  const d = c.step < 1 ? Math.max(2, String(c.step).split('.')[1].length) : 0;
+  return v.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+}
 
 export class Controls {
   constructor(renderer) {
@@ -44,68 +47,115 @@ export class Controls {
       hiiStrength: 0.6,
     };
 
+    this.isOpen = false;
+    this.panel = document.getElementById('panel');
+    this._link = document.getElementById('nav-controls');
+    this._about = document.getElementById('about');
     this._build();
   }
 
   _build() {
-    const gui = new GUI({ title: 'Galaxy Sim' });
-
-    // Simulation folder
-    const simFolder = gui.addFolder('Simulation');
-    simFolder.add(this.state, 'paused').name('Pause');
-    simFolder.add(this.state, 'speed', 0.01, 10, 0.01).name('Speed');
-    simFolder.add({ reset: () => this._restart() }, 'reset').name('Reset');
-
-    // Initial conditions folder — changes auto-restart after 600ms debounce
-    const icFolder = gui.addFolder('Initial Conditions');
-    icFolder.add(this.state, 'preset', ['Galaxy Disk', 'Uniform Sphere', 'Collision'])
-      .name('Preset').onChange(() => this._scheduleRestart());
-    icFolder.add(this.state, 'N', 1000, 500000, 1000).name('N (stars)')
-      .onChange(() => this._scheduleRestart());
-    icFolder.add(this.state, 'diskRadius', 10, 200).name('Disk Radius')
-      .onChange(() => this._scheduleRestart());
-    icFolder.add(this.state, 'diskHeight', 0.5, 20).name('Disk Height')
-      .onChange(() => this._scheduleRestart());
-    icFolder.add(this.state, 'centralMass', 0, 50000).name('Central Mass')
-      .onChange(v => this._onCentralMass?.(v));
-    icFolder.add(this.state, 'toomreQ', 0.8, 3, 0.05).name('Toomre Q')
-      .onChange(() => this._scheduleRestart());
-    icFolder.add(this.state, 'armCount', 1, 6, 1).name('Arm Count')
-      .onChange(() => this._scheduleRestart());
-
-    // Physics folder — live (read from state each frame)
-    const physFolder = gui.addFolder('Physics');
-    physFolder.add(this.state, 'G', 0.1, 10).name('G');
-    physFolder.add(this.state, 'epsilon', 0.1, 10).name('Softening ε');
-    physFolder.add(this.state, 'dt', 0.001, 0.1).name('Timestep dt');
-    physFolder.add(this.state, 'theta', 0.1, 1.0, 0.05).name('BH Theta θ');
-    physFolder.add(this.state, 'haloFactor', 0, 10, 0.1).name('Halo Mass ×M⋆')
-      .onChange(() => this._scheduleRestart());
-    physFolder.add(this.state, 'haloScale', 0.3, 4, 0.1).name('Halo Scale ×R')
-      .onChange(() => this._scheduleRestart());
-    physFolder.add(this.state, 'gasDrag', 0, 1, 0.01).name('Gas Cooling');
-    physFolder.add(this.state, 'sfEff', 0, 1, 0.01).name('SF Efficiency');
-    physFolder.add(this.state, 'sfThreshold', 0.5, 10, 0.1).name('SF Threshold ×ρ̄');
-
-    // Display folder — drives renderer directly
     const r = this.renderer;
-    const dispFolder = gui.addFolder('Display');
-    dispFolder.add(this.state, 'colorMode', Object.keys(COLOR_MODES)).name('Color Mode')
-      .onChange(v => { r.colorMode = COLOR_MODES[v]; });
-    dispFolder.add(this.state, 'agingRate', 0, 200, 1).name('Aging (Myr/t)')
-      .onChange(v => { r.agingRate = v; });
-    dispFolder.add(this.state, 'exposureEV', -4, 4, 0.1).name('Exposure (EV)')
-      .onChange(v => { r.exposure = Math.pow(2, v); });
-    dispFolder.add(this.state, 'bloomStrength', 0, 1.5, 0.01).name('Bloom')
-      .onChange(v => { r.bloomStrength = v; });
-    dispFolder.add(this.state, 'starIntensity', 0.05, 4, 0.05).name('Star Intensity')
-      .onChange(v => { r.starIntensity = v; });
-    dispFolder.add(this.state, 'sizeScale', 0.3, 3, 0.05).name('Star Size')
-      .onChange(v => { r.sizeScale = v; });
-    dispFolder.add(this.state, 'dustStrength', 0, 1.5, 0.05).name('Dust Lanes')
-      .onChange(v => { r.dustStrength = v; });
-    dispFolder.add(this.state, 'hiiStrength', 0, 2, 0.05).name('H-II Nebulae')
-      .onChange(v => { r.hiiStrength = v; });
+    const schema = [
+      { section: 'Simulation', key: 'paused', label: 'Pause' },
+      { key: 'speed', label: 'Speed', min: 0.01, max: 10, step: 0.01 },
+      { label: 'Reset' },
+      // Initial conditions — changes auto-restart after 600ms debounce
+      { section: 'Initial Conditions', key: 'preset', label: 'Preset',
+        options: ['Galaxy Disk', 'Uniform Sphere', 'Collision'], restart: true },
+      { key: 'N', label: 'N (stars)', min: 1000, max: 500000, step: 1000, restart: true },
+      { key: 'diskRadius', label: 'Disk Radius', min: 10, max: 200, step: 1, restart: true },
+      { key: 'diskHeight', label: 'Disk Height', min: 0.5, max: 20, step: 0.1, restart: true },
+      { key: 'centralMass', label: 'Central Mass', min: 0, max: 50000, step: 100,
+        onChange: v => this._onCentralMass?.(v) },
+      { key: 'toomreQ', label: 'Toomre Q', min: 0.8, max: 3, step: 0.05, restart: true },
+      { key: 'armCount', label: 'Arm Count', min: 1, max: 6, step: 1, restart: true },
+      // Physics — live (read from state each frame)
+      { section: 'Physics', key: 'G', label: 'G', min: 0.1, max: 10, step: 0.01 },
+      { key: 'epsilon', label: 'Softening ε', min: 0.1, max: 10, step: 0.01 },
+      { key: 'dt', label: 'Timestep dt', min: 0.001, max: 0.1, step: 0.001 },
+      { key: 'theta', label: 'BH Theta θ', min: 0.1, max: 1, step: 0.05 },
+      { key: 'haloFactor', label: 'Halo Mass ×M⋆', min: 0, max: 10, step: 0.1, restart: true },
+      { key: 'haloScale', label: 'Halo Scale ×R', min: 0.3, max: 4, step: 0.1, restart: true },
+      { key: 'gasDrag', label: 'Gas Cooling', min: 0, max: 1, step: 0.01 },
+      { key: 'sfEff', label: 'SF Efficiency', min: 0, max: 1, step: 0.01 },
+      { key: 'sfThreshold', label: 'SF Threshold ×ρ̄', min: 0.5, max: 10, step: 0.1 },
+      // Display — drives renderer directly
+      { section: 'Display', key: 'colorMode', label: 'Color Mode', options: Object.keys(COLOR_MODES),
+        onChange: v => { r.colorMode = COLOR_MODES[v]; } },
+      { key: 'agingRate', label: 'Aging (Myr/t)', min: 0, max: 200, step: 1,
+        onChange: v => { r.agingRate = v; } },
+      { key: 'exposureEV', label: 'Exposure (EV)', min: -4, max: 4, step: 0.1,
+        onChange: v => { r.exposure = Math.pow(2, v); } },
+      { key: 'bloomStrength', label: 'Bloom', min: 0, max: 1.5, step: 0.01,
+        onChange: v => { r.bloomStrength = v; } },
+      { key: 'starIntensity', label: 'Star Intensity', min: 0.05, max: 4, step: 0.05,
+        onChange: v => { r.starIntensity = v; } },
+      { key: 'sizeScale', label: 'Star Size', min: 0.3, max: 3, step: 0.05,
+        onChange: v => { r.sizeScale = v; } },
+      { key: 'dustStrength', label: 'Dust Lanes', min: 0, max: 1.5, step: 0.05,
+        onChange: v => { r.dustStrength = v; } },
+      { key: 'hiiStrength', label: 'H-II Nebulae', min: 0, max: 2, step: 0.05,
+        onChange: v => { r.hiiStrength = v; } },
+    ];
+
+    const s = this.state;
+    const byKey = {};
+    let html = '';
+    for (const c of schema) {
+      if (c.section) html += `${html ? '</details>' : ''}<details open><summary>${c.section}</summary>`;
+      if (!c.key) {
+        html += `<div class="row act"><button type="button" class="btn">${c.label}</button></div>`;
+        continue;
+      }
+      byKey[c.key] = c;
+      const id = `c-${c.key}`;
+      const v = s[c.key];
+      if (typeof v === 'boolean') {
+        html += `<label class="row tog"><span class="lbl">${c.label}</span><input type="checkbox" class="sr" name="${c.key}"${v ? ' checked' : ''}><span class="state" aria-hidden="true"></span></label>`;
+      } else if (c.options) {
+        const opts = c.options.map(o => `<option${o === v ? ' selected' : ''}>${o}</option>`).join('');
+        html += `<div class="row"><label for="${id}">${c.label}</label><select id="${id}" name="${c.key}">${opts}</select></div>`;
+      } else {
+        html += `<div class="row"><label for="${id}">${c.label}</label><output for="${id}">${fmt(c, v)}</output><input id="${id}" name="${c.key}" type="range" min="${c.min}" max="${c.max}" step="${c.step}" value="${v}"></div>`;
+      }
+    }
+    this.panel.insertAdjacentHTML('beforeend', html + '</details>');
+
+    this.panel.addEventListener('input', e => {
+      const c = byKey[e.target.name];
+      if (!c) return;
+      const t = e.target;
+      const v = t.type === 'checkbox' ? t.checked : c.options ? t.value : +t.value;
+      s[c.key] = v;
+      if (t.type === 'range') t.previousElementSibling.value = fmt(c, v);
+      c.onChange?.(v);
+      if (c.restart) this._scheduleRestart();
+    });
+    this.panel.querySelector('.btn').addEventListener('click', () => this._restart());
+
+    this._link.addEventListener('click', () => this.toggle());
+    document.getElementById('sheet-close').addEventListener('click', () => this.open(false));
+    document.getElementById('nav-reset').addEventListener('click', () => this._restart());
+    document.getElementById('nav-about').addEventListener('click', () => {
+      const show = this._about.hidden || !this.isOpen;
+      this.open(true);
+      this._setAbout(show);
+    });
+  }
+
+  open(on) {
+    this.isOpen = on;
+    this.panel.classList.toggle('open', on);
+    this._link.setAttribute('aria-expanded', on);
+    if (!on) this._setAbout(false);
+  }
+
+  toggle() { this.open(!this.isOpen); }
+
+  _setAbout(show) {
+    this._about.hidden = !show;
+    document.getElementById('nav-about').setAttribute('aria-expanded', show);
   }
 
   _scheduleRestart() {

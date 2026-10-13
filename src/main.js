@@ -29,6 +29,7 @@ let energyDrift = 0;
 let stepAccumulator = 0;
 let lastFrameTime = performance.now();
 let simTime = 0;
+let systemTime = 0;   // solar-system clock: runs at a fixed pace, independent of galaxy speed and pause
 let systemRenderer = null;
 const R_ENTER = 1.5;   // galaxy-camera radius where the system starts fading in
 const R_FULL = 0.8;    // fully faded in
@@ -36,6 +37,9 @@ const R_FULL = 0.8;    // fully faded in
 // FPS counter — element is declared in index.html
 let frameCount = 0, lastFPSTime = performance.now();
 const fpsEl = document.getElementById('fps');
+const sheetFpsEl = document.getElementById('sheet-fps');
+const capNEl = document.getElementById('cap-n');
+const capTEl = document.getElementById('cap-t');
 
 function setLoadingStatus(msg) {
   const el = document.getElementById('loading-status');
@@ -54,12 +58,13 @@ function updateStarInfo() {
   if (!el) return;
   if (!selection) { el.classList.remove('visible'); return; }
   const { star, planets, belt } = selection.system;
-  const what = planets.length
-    ? `${planets.length} planet${planets.length > 1 ? 's' : ''}`
-    : 'barren system';
-  el.innerHTML =
-    `<span class="cls">CLASS ${star.class}</span> · ${star.mass.toFixed(2)} M☉ · ${Math.round(star.tempK).toLocaleString()} K<br>` +
-    `${what}${belt ? ' · asteroid belt' : ''} — scroll in to visit · Esc to release`;
+  const lit = 'OBAFGKM'.indexOf(star.class);
+  el.querySelector('.sc-cls').textContent = star.class;
+  el.querySelector('.sc-mass').textContent = `${star.mass.toFixed(2)} M☉`;
+  el.querySelector('.sc-temp').textContent = `${Math.round(star.tempK).toLocaleString()} K`;
+  el.querySelector('.sc-planets').textContent = `${planets.length}${belt ? ' · belt' : ''}`;
+  el.querySelector('.sc-bar').setAttribute('aria-label', `Blackbody colour, class ${star.class}`);
+  el.querySelectorAll('.sc-bar i, .sc-scale span').forEach((n, i) => n.classList.toggle('on', i % 7 === lit));
   el.classList.add('visible');
 }
 
@@ -178,7 +183,9 @@ async function init(params) {
       handlePick(e.clientX, e.clientY).catch(console.error);
     });
     document.addEventListener('keydown', e => {
-      if (e.key === 'Escape') deselect();
+      if (e.key !== 'Escape') return;
+      if (controls?.isOpen) controls.open(false);
+      else deselect();
     });
 
     setLoadingStatus('Building render pipeline…');
@@ -272,13 +279,19 @@ function loop() {
   frameCount++;
   const now = performance.now();
   if (now - lastFPSTime > 1000) {
-    const drift = energyBaseline !== null ? ` | ΔE ${(energyDrift * 100).toFixed(1)}%` : '';
-    fpsEl.textContent = `${frameCount} fps | N=${(sim?.N ?? 0).toLocaleString()}${drift}`;
+    const n = (sim?.N ?? 0).toLocaleString();
+    const drift = energyBaseline !== null ? ` · ΔE ${(energyDrift * 100).toFixed(1)}%` : '';
+    fpsEl.textContent = `${frameCount} fps · N ${n}${drift}`;
+    sheetFpsEl.textContent = `${frameCount} fps · N ${n}`;
+    capNEl.textContent = n;
+    capTEl.textContent = (simTime * (controls?.state.agingRate ?? 0) / 1000).toFixed(1);
     frameCount = 0;
     lastFPSTime = now;
   }
   const dtWall = Math.min((now - lastFrameTime) / 1000, 0.1);
   lastFrameTime = now;
+
+  systemTime += dtWall * 0.6;   // 0.6 = 60 steps/s × dt 0.01, the galaxy's pace at speed 1
 
   if (selection) camera._goal.target.fill(0);   // the selected star is the origin; no panning off it
   camera.update();
@@ -293,7 +306,7 @@ function loop() {
     renderer.systemFade = fade;
     if (fade > 0) {
       const rSys = 0.5 * Math.pow(camera.radius / 0.02, 1.27);   // 0.02→0.5, 1.5→~120
-      systemRenderer.updateCamera(camera, rSys, fade, simTime);
+      systemRenderer.updateCamera(camera, rSys, fade, systemTime);
       systemScene = systemRenderer;
       if (camera.radius < R_ENTER) galaxyCam = camera.viewFrom(R_ENTER);
     }
@@ -312,7 +325,8 @@ function loop() {
 
   // Fractional speed: accumulate sub-step credits so speed < 1 skips steps.
   // Wall-clock based: speed 1 = 60 steps/s at any display refresh rate.
-  stepAccumulator += s.speed * 60 * dtWall;
+  // The galaxy slows to a stop as a solar system fades in
+  stepAccumulator += s.speed * 60 * dtWall * (1 - renderer.systemFade);
   // Cap steps/frame: physics quality degrades when many steps run against
   // one (increasingly stale) tree snapshot. Credit beyond the cap is dropped.
   const stepsThisFrame = Math.min(Math.floor(stepAccumulator), 8);
@@ -431,18 +445,13 @@ try {
     loadingEl.classList.add('hidden');
     setTimeout(() => loadingEl.remove(), 700);
   }
-  ['hud-title', 'fps', 'controls-hint'].forEach(id => {
+  ['hud-title', 'fps', 'controls-hint', 'caption'].forEach(id => {
     document.getElementById(id)?.classList.add('ready');
   });
-  document.querySelectorAll('.lil-gui.root').forEach(el => el.classList.add('ready'));
 
-  // H key — toggle controls panel visibility
+  // H key — toggle controls sheet
   document.addEventListener('keydown', e => {
-    if ((e.key === 'h' || e.key === 'H') && !e.ctrlKey && !e.altKey && !e.metaKey) {
-      document.querySelectorAll('.lil-gui.root').forEach(el => {
-        el.style.display = el.style.display === 'none' ? '' : 'none';
-      });
-    }
+    if ((e.key === 'h' || e.key === 'H') && !e.ctrlKey && !e.altKey && !e.metaKey) controls.toggle();
   });
 
   loop();
