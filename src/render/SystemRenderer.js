@@ -189,16 +189,17 @@ export class SystemRenderer {
     });
   }
 
-  /** Write uniforms: galaxy-camera orientation at system-space radius rSys. */
-  updateCamera(camera, rSys, fade, time) {
+  /** Write uniforms: galaxy-camera orientation at system-space radius rSys around focusPos. */
+  updateCamera(camera, rSys, fade, time, focusPos = [0, 0, 0]) {
     const eye = [
-      -camera.forward[0] * rSys,
-      -camera.forward[1] * rSys,
-      -camera.forward[2] * rSys,
+      focusPos[0] - camera.forward[0] * rSys,
+      focusPos[1] - camera.forward[1] * rSys,
+      focusPos[2] - camera.forward[2] * rSys,
     ];
     const vp = new Float32Array(16);
     makeViewProj(vp, eye, camera.right, camera.up, camera.forward,
                  camera.fovY, camera.aspect, 0.005, 3000);
+    this.viewProj = vp;   // last frame's matrix, for picking
     const u = new Float32Array(32);
     u.set(vp, 0);
     u.set(camera.right, 16); u[19] = time;

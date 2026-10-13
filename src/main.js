@@ -5,7 +5,7 @@ import { galaxyDisk, uniformSphere, twoGalaxyCollision } from './physics/Initial
 import { Controls } from './ui/Controls.js';
 import { sortAndBuild } from './physics/mortonTree.js';
 import { pickCandidates, readStellarRecords, remapIndex } from './ui/StarSelection.js';
-import { generateSystem } from './system/SystemGen.js';
+import { generateSystem, bodyPositions } from './system/SystemGen.js';
 import { SystemRenderer } from './render/SystemRenderer.js';
 
 let renderer, camera, sim, controls, gpuDevice;
@@ -31,8 +31,22 @@ let lastFrameTime = performance.now();
 let simTime = 0;
 let systemTime = 0;   // solar-system clock: runs at a fixed pace, independent of galaxy speed and pause
 let systemRenderer = null;
+let focusIdx = 0;            // focused system body, bodyPositions order (0 = the star)
+let focusFrom = [0, 0, 0];   // focus point when the focus last changed
+let focusCur = [0, 0, 0];    // blended point the system camera orbits
+let focusT = 1;              // seconds since the focus changed
+let sysUiShown = 0;          // in-system UI state last written to the DOM
 const R_ENTER = 1.5;   // galaxy-camera radius where the system starts fading in
 const R_FULL = 0.8;    // fully faded in
+const FOCUS_BLEND = 0.4;   // seconds to move the system camera to a new focus
+// System zoom law: galaxy-camera radius → system eye distance (0.02 → 0.5 AU, 1.5 → ~120)
+const sysRadius = r => 0.5 * Math.pow(r / 0.02, 1.27);
+const camRadiusFor = rSys => 0.02 * Math.pow(rSys / 0.5, 1 / 1.27);
+const KIND_NAME = ['Star', 'Scorched world', 'Venusian world', 'Terran world', 'Icy world', 'Gas giant', 'Ice giant', 'Rocky world'];
+const scHintEls = [...document.querySelectorAll('#star-info .sc-hint span')];   // mouse, touch
+const scHintText = scHintEls.map(n => n.textContent);
+const hintEls = [...document.querySelectorAll('.hint span')];                   // mouse, touch
+const hintText = [hintEls.map(n => n.textContent), ['Click a planet · Scroll · Esc', 'Tap a planet · Pinch · Tap sky']];
 
 // FPS counter — element is declared in index.html
 let frameCount = 0, lastFPSTime = performance.now();
@@ -65,6 +79,10 @@ function updateStarInfo() {
   el.querySelector('.sc-planets').textContent = `${planets.length}${belt ? ' · belt' : ''}`;
   el.querySelector('.sc-bar').setAttribute('aria-label', `Blackbody colour, class ${star.class}`);
   el.querySelectorAll('.sc-bar i, .sc-scale span').forEach((n, i) => n.classList.toggle('on', i % 7 === lit));
+  const b = focusIdx ? bodyPositions(selection.system, 0)[focusIdx] : null;
+  const focused = b && `Focused: ${KIND_NAME[b.planet.kind]}${b.moon ? ' moon' : ''}, ${b.planet.a.toFixed(2)} AU.\n`;
+  scHintEls[0].textContent = focused ? focused + 'Esc to release.' : scHintText[0];
+  scHintEls[1].textContent = focused ? focused + 'Tap empty sky to release.' : scHintText[1];
   el.classList.add('visible');
 }
 
@@ -80,6 +98,42 @@ function shiftCameraTarget(idx, sign) {
   }
 }
 
+// Zoom floor: the eye stays at least 1.6 star radii from the star's centre
+// (never closer than the default 0.02), or 2.5 radii from a focused planet or moon.
+function focusMinRadius() {
+  const sys = selection.system;
+  return focusIdx ? camRadiusFor(2.5 * bodyPositions(sys, 0)[focusIdx].radius)
+                  : Math.max(0.02, camRadiusFor(1.6 * sys.star.radius));
+}
+
+function setFocus(i) {
+  if (i === focusIdx) return;
+  focusIdx = i;
+  focusFrom = [...focusCur];
+  focusT = 0;
+  camera.setMinRadius(focusMinRadius());
+  updateStarInfo();
+}
+
+// Nearest body whose projected disc, or an 18 px target, covers the click; the star on a miss.
+function pickBody(x, y) {
+  const dpr = devicePixelRatio || 1;
+  const px = x * dpr, py = y * dpr, W = renderer.width, H = renderer.height;
+  const m = systemRenderer.viewProj;
+  const tanHalf = Math.tan(camera.fovY / 2);
+  let best = 0, bestD = Infinity;
+  bodyPositions(selection.system, systemTime).forEach(({ pos: [bx, by, bz], radius }, i) => {
+    const w = m[3] * bx + m[7] * by + m[11] * bz + m[15];
+    if (w <= 0) return;
+    const sx = ((m[0] * bx + m[4] * by + m[8] * bz + m[12]) / w * 0.5 + 0.5) * W;
+    const sy = (-(m[1] * bx + m[5] * by + m[9] * bz + m[13]) / w * 0.5 + 0.5) * H;
+    const d = Math.hypot(sx - px, sy - py);
+    const rPx = radius / (w * tanHalf) * H / 2;
+    if (d <= Math.max(rPx, 18 * dpr) && d < bestD) { best = i; bestD = d; }
+  });
+  return best;
+}
+
 function select(idx, record) {
   if (selection) shiftCameraTarget(selection.idx, 1);
   shiftCameraTarget(idx, -1);
@@ -88,7 +142,8 @@ function select(idx, record) {
     system: generateSystem(record[0], record[1], record[2]),
   };
   renderer.selectedIdx = idx;
-  camera.setMinRadius(0.02);
+  focusIdx = 0; focusCur = [0, 0, 0]; focusT = 1;
+  camera.setMinRadius(focusMinRadius());
   window.__system = selection.system;
   systemRenderer.setSystem(selection.system);
   updateStarInfo();
@@ -98,6 +153,7 @@ function deselect() {
   if (!selection) return;
   shiftCameraTarget(selection.idx, 1);
   selection = null;
+  focusIdx = 0; focusCur = [0, 0, 0]; focusT = 1;
   renderer.selectedIdx = 0xffffffff;
   renderer.systemFade = 0;
   systemRenderer?.setSystem(null);
@@ -109,8 +165,8 @@ function deselect() {
 }
 
 async function handlePick(x, y) {
+  if (selection && renderer.systemFade > 0) { setFocus(pickBody(x, y)); return; }
   if (!sim?.ready || !lastPositions) return;
-  if (renderer.systemFade > 0) return;   // inside a system: clicks are not picks
   const mySim = sim;
   const dpr = devicePixelRatio || 1;
   const origin = selection ? lastPositions.subarray(selection.idx * 4, selection.idx * 4 + 3) : undefined;
@@ -184,7 +240,8 @@ async function init(params) {
     });
     document.addEventListener('keydown', e => {
       if (e.key !== 'Escape') return;
-      if (controls?.isOpen) controls.open(false);
+      if (focusIdx) setFocus(0);
+      else if (controls?.isOpen) controls.open(false);
       else deselect();
     });
 
@@ -245,7 +302,8 @@ async function init(params) {
   window.__sim = sim;  // debug/verification hooks
   window.__renderer = renderer;
   window.__camera = camera;
-  window.__dbg = () => ({ centralIdx, centralIdx2, haloPerGalaxy, sfRho0, simTime });
+  window.__systemRenderer = systemRenderer;
+  window.__dbg = () => ({ centralIdx, centralIdx2, haloPerGalaxy, sfRho0, simTime, systemTime, focusIdx, focusCur });
   window.__state = controls?.state;
   window.__restart = (over = {}) => {
     Object.assign(controls.state, over);
@@ -304,12 +362,24 @@ function loop() {
     const t = Math.min(Math.max((R_ENTER - camera.radius) / (R_ENTER - R_FULL), 0), 1);
     const fade = t * t * (3 - 2 * t);
     renderer.systemFade = fade;
-    if (fade > 0) {
-      const rSys = 0.5 * Math.pow(camera.radius / 0.02, 1.27);   // 0.02→0.5, 1.5→~120
-      systemRenderer.updateCamera(camera, rSys, fade, systemTime);
+    if (fade === 0) setFocus(0);
+    else {
+      focusT += dtWall;
+      const k = Math.min(focusT / FOCUS_BLEND, 1), blend = k * k * (3 - 2 * k);
+      const to = focusIdx ? bodyPositions(selection.system, systemTime)[focusIdx].pos : [0, 0, 0];
+      for (let c = 0; c < 3; c++) focusCur[c] = focusFrom[c] + (to[c] - focusFrom[c]) * blend;
+      systemRenderer.updateCamera(camera, sysRadius(camera.radius), fade, systemTime, focusCur);
       systemScene = systemRenderer;
       if (camera.radius < R_ENTER) galaxyCam = camera.viewFrom(R_ENTER);
     }
+  }
+
+  // In a system: planet-picking hint; past half fade, a solid card over the sun's glow
+  const sysUi = (renderer.systemFade > 0) + (renderer.systemFade > 0.5);
+  if (sysUi !== sysUiShown) {
+    sysUiShown = sysUi;
+    document.getElementById('star-info').classList.toggle('in-system', sysUi === 2);
+    hintEls.forEach((n, i) => { n.textContent = hintText[sysUi > 0 ? 1 : 0][i]; });
   }
 
   if (!sim || !sim.ready || controls?.state.paused) {

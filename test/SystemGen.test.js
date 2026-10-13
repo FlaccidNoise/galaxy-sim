@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mulberry32, generateSystem, spectralClass, KIND } from '../src/system/SystemGen.js';
+import { mulberry32, generateSystem, spectralClass, KIND, bodyPositions } from '../src/system/SystemGen.js';
 
 test('mulberry32 is deterministic and in [0,1)', () => {
   const a = mulberry32(42), b = mulberry32(42);
@@ -72,4 +72,31 @@ test('spectral classes', () => {
   assert.equal(spectralClass(5778), 'G');
   assert.equal(spectralClass(35000), 'O');
   assert.equal(spectralClass(3000), 'M');
+});
+
+test('bodyPositions follows the shader orbit formula and buffer order', () => {
+  const sys = generateSystem(1.2, 0.3, 0.77);
+  const giant = sys.planets.find(p => p.moons.length);
+  assert.ok(giant, 'fixture needs a planet with moons');
+  const t = 3.7;
+  const bodies = bodyPositions(sys, t);
+  assert.equal(bodies.length, 1 + sys.planets.reduce((n, p) => n + 1 + p.moons.length, 0));
+  assert.deepEqual(bodies[0].pos, [0, 0, 0]);
+  assert.equal(bodies[0].radius, sys.star.radius);
+
+  // shader: orbitPos(a, phase, rate) = (cos(phase + rate·t)·a, sin(…)·a, 0)
+  const orbitPos = (a, phase, rate) => [Math.cos(phase + rate * t) * a, Math.sin(phase + rate * t) * a, 0];
+  let i = 1;
+  for (const p of sys.planets) {
+    const c = orbitPos(p.a, p.phase, p.rate);
+    assert.deepEqual(bodies[i].pos, c);
+    assert.equal(bodies[i].planet, p);
+    assert.equal(bodies[i++].moon, false);
+    for (const m of p.moons) {
+      const o = orbitPos(m.a, m.phase, m.rate);
+      assert.deepEqual(bodies[i].pos, [c[0] + o[0], c[1] + o[1], 0]);
+      assert.equal(bodies[i].radius, m.radius);
+      assert.equal(bodies[i++].moon, true);
+    }
+  }
 });

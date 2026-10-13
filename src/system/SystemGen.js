@@ -22,6 +22,28 @@ export function orbitRate(a) {
   return 2 * Math.PI * ORBIT_SPEED / Math.pow(a, 1.5);
 }
 
+/**
+ * Body centres at system time t, in SystemRenderer's buffer order: the star,
+ * then each planet followed by its moons. Mirrors orbitPos/bodyCenter in
+ * system.wgsl. planet is null for the star; moons carry their parent planet.
+ */
+export function bodyPositions(system, t) {
+  const orbit = (a, phase, rate) => {
+    const ang = phase + rate * t;
+    return [Math.cos(ang) * a, Math.sin(ang) * a, 0];
+  };
+  const out = [{ pos: [0, 0, 0], radius: system.star.radius, planet: null, moon: false }];
+  for (const p of system.planets) {
+    const c = orbit(p.a, p.phase, p.rate);
+    out.push({ pos: c, radius: p.radius, planet: p, moon: false });
+    for (const m of p.moons) {
+      const o = orbit(m.a, m.phase, m.rate);
+      out.push({ pos: [c[0] + o[0], c[1] + o[1], 0], radius: m.radius, planet: p, moon: true });
+    }
+  }
+  return out;
+}
+
 export function spectralClass(tempK) {
   if (tempK >= 30000) return 'O';
   if (tempK >= 10000) return 'B';
