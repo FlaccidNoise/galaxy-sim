@@ -281,8 +281,8 @@ function loop() {
   if (now - lastFPSTime > 1000) {
     const n = (sim?.N ?? 0).toLocaleString();
     const drift = energyBaseline !== null ? ` · ΔE ${(energyDrift * 100).toFixed(1)}%` : '';
-    fpsEl.textContent = `${frameCount} fps · N ${n}${drift}`;
-    sheetFpsEl.textContent = `${frameCount} fps · N ${n}`;
+    fpsEl.innerHTML = `<b>${frameCount} FPS</b> <span>· ${n}${drift}</span>`;
+    sheetFpsEl.textContent = `${frameCount} FPS · ${n}`;
     capNEl.textContent = n;
     capTEl.textContent = (simTime * (controls?.state.agingRate ?? 0) / 1000).toFixed(1);
     frameCount = 0;
@@ -445,9 +445,7 @@ try {
     loadingEl.classList.add('hidden');
     setTimeout(() => loadingEl.remove(), 700);
   }
-  ['hud-title', 'fps', 'controls-hint', 'caption'].forEach(id => {
-    document.getElementById(id)?.classList.add('ready');
-  });
+  document.getElementById('bl').classList.add('ready');
 
   // H key — toggle controls sheet
   document.addEventListener('keydown', e => {

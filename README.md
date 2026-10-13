@@ -49,9 +49,12 @@ AgX tone mapping.
 ## Controls
 
 - Drag to rotate, right-drag to pan, scroll to zoom.
-- **Controls** (top right) or **H** opens the control sheet. Esc closes it,
-  or releases the selected star when the sheet is closed. **About** shows a
-  short summary, **Reset** restarts the simulation.
+- **Controls** (top right) or **H** opens the control sheet. On a wide screen
+  the rail on the right lists its sections and About. Click one to open the
+  sheet at that section. Esc closes the sheet, or releases the selected star
+  when the sheet is closed. **Reset** restarts the simulation.
+- While you are inside a solar system the galaxy stops, and the planets keep
+  their own pace whatever the galaxy's speed or pause.
 - Touch: one finger rotates, two fingers pinch to zoom and drag to pan, tap selects a star.
 - **Initial Conditions**: preset (disk / sphere / collision), N up to 500k,
   Toomre Q, arm count.
@@ -60,7 +63,7 @@ AgX tone mapping.
 - **Display**: aging rate (Myr per time unit; 0 freezes stellar evolution),
   exposure, bloom, dust, nebulae.
 - The caption (bottom left) shows the star count and elapsed time in Gyr.
-  The line under it shows fps, N, and total-energy drift. Negative drift is
+  The readout (bottom right) shows fps, N, and total-energy drift. Negative drift is
   gas cooling; slow positive drift at low N is two-body relaxation (each
   particle stands in for ~10⁴ stars) and shrinks as N grows.
 

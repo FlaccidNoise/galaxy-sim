@@ -1,242 +1,221 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en-CA">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Galaxy Sim</title>
-
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <meta name="theme-color" content="#0a0a0b">
+  <title>Galaxy, Josh Taylor</title>
 
   <style>
     :root {
-      --bg: #030305;
-      --ink: #ece6da;
-      --mute: #a09b90;
-      --line: rgba(236, 230, 218, .14);
-      --line2: rgba(236, 230, 218, .34);
-      --acc: #9fdcff;
-      --hit: 24px;
-      --sum: 40px;
-      --pw: 400px;
-      --disp: clamp(30px, 6vw, 104px);
-      --serif: 'Instrument Serif', Georgia, serif;
-      --mono: 'IBM Plex Mono', ui-monospace, monospace;
+      --accent: #1c7df0;
+      --paper: #f1ede3;
+      --ink: #131314;
+      --ground: #0a0a0b;
+      --sans: 'Helvetica Neue', 'Inter Variable', sans-serif;
+      --mono: ui-monospace, 'SF Mono', Menlo, 'JetBrains Mono Variable', monospace;
+      --edge: clamp(18px, 2.4vw, 36px);
+      --quiet: .66;
+      --line: rgba(241, 237, 227, .18);
+      --disp: clamp(2.4rem, min(6.6vw, 14vh), 7rem);
+      --railw: 180px;
+      --sheetw: 360px;
     }
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-    html { color-scheme: dark; }
-    body {
-      background: var(--bg);
-      color: var(--ink);
-      overflow: hidden;
-      font: 400 12px/1.5 var(--mono);
-      letter-spacing: .04em;
-    }
+    html { background: var(--ground); color: var(--paper); font-family: var(--sans); -webkit-font-smoothing: antialiased; }
+    body { overflow: hidden; font-size: 15px; line-height: 1.5; }
     canvas { display: block; }
+    a { color: inherit; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
     .sr { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; clip: rect(0 0 0 0); }
 
-    .skip-link {
-      position: fixed; top: -100%; left: 16px; z-index: 10000;
-      padding: 8px 12px; background: var(--bg); color: var(--ink);
-      border: 1px solid var(--ink); font: 11px var(--mono);
-      text-transform: uppercase; letter-spacing: .14em; text-decoration: none;
+    .skip-link { position: absolute; left: -999px; top: 8px; z-index: 10000; padding: 8px 16px; background: var(--paper); color: var(--ink); }
+    .skip-link:focus { left: 8px; }
+
+    .corner, .lnk, #rail, #fps, .hint, .sc-label, .sc-rows, .sc-scale, .sc-hint,
+    summary, .row, .btn, #sheet-fps {
+      font-family: var(--mono); font-size: 11px; font-weight: 400; letter-spacing: .08em; text-transform: uppercase;
     }
-    .skip-link:focus { top: 16px; outline: 1px solid var(--acc); outline-offset: 2px; }
 
     /* ── Loading ─────────────────────────── */
     #loading {
-      position: fixed; inset: 0; z-index: 9999; background: var(--bg);
+      position: fixed; inset: 0; z-index: 9999; background: var(--ground);
       display: flex; flex-direction: column; justify-content: flex-end; gap: 14px;
-      padding: 16px 16px 0;
-      overflow: hidden;
+      padding: var(--edge);
       transition: opacity .7s ease;
     }
     #loading.hidden { opacity: 0; pointer-events: none; }
-    .loading-wordmark {
-      order: 3; font: 400 clamp(64px, 17vw, 280px)/.8 var(--serif);
-      letter-spacing: -.02em; padding-bottom: .22em; margin-left: -.03em;
-    }
-    .loading-wordmark em { font-style: italic; }
-    .loading-spinner {
-      order: 2; height: 1px; background: var(--acc);
-      transform-origin: left; animation: draw 2.4s cubic-bezier(.6, 0, .2, 1) infinite;
-    }
+    .loading-wordmark { font-size: var(--disp); font-weight: 500; line-height: .92; letter-spacing: -.04em; }
+    .loading-status { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; opacity: var(--quiet); }
+    .loading-spinner { height: 1px; background: var(--paper); opacity: var(--quiet); transform-origin: left; animation: draw 2.4s cubic-bezier(.6, 0, .2, 1) infinite; }
     @keyframes draw { 0% { transform: scaleX(0); } 70%, 100% { transform: scaleX(1); } }
-    .loading-status {
-      order: 1; font-size: 11px; text-transform: uppercase; letter-spacing: .18em; color: var(--mute);
-    }
 
-    /* ── Chrome ──────────────────────────── */
-    #hud-title, #fps, #controls-hint, #star-info, #caption {
-      position: fixed; z-index: 100; pointer-events: none; opacity: 0;
-      transition: opacity .6s ease .15s;
-    }
-    #hud-title.ready, #fps.ready, #caption.ready, #star-info.visible { opacity: 1; }
-
-    #hud-title { top: 18px; left: 16px; }
-    .hud-title-main { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: .24em; }
-    .hud-title-sub  { display: block; margin-top: 2px; font-size: 11px; text-transform: uppercase; letter-spacing: .14em; color: var(--mute); }
-
-    #controls-hint {
-      top: 70px; left: 16px;
-      font-size: 11px; line-height: 1.9; letter-spacing: .1em; color: var(--mute);
-    }
-    #controls-hint.ready { animation: fade-in .5s ease .5s forwards, fade-out .8s ease 6s forwards; }
-    .hint-touch { display: none; }
-    @media (pointer: coarse) {
-      .hint-mouse { display: none; }
-      .hint-touch { display: block; }
-    }
-    @keyframes fade-in  { to { opacity: 1; } }
-    @keyframes fade-out { from { opacity: 1; } to { opacity: 0; } }
-
-    #caption {
-      left: 16px; bottom: 40px; max-width: calc(100vw - 32px);
-      font: 400 var(--disp)/.92 var(--serif); letter-spacing: -.01em; white-space: nowrap;
-    }
-    #caption em { font-style: italic; }
-
-    #fps { left: 18px; bottom: 14px; color: var(--mute); font-size: 12px; font-variant-numeric: tabular-nums; }
-
-    /* ── Spectral card (selected star) ───── */
-    #star-info { left: 16px; bottom: calc(var(--disp) + 54px); width: 236px; transition: opacity .3s ease; }
-    .sc-label { font-size: 11px; text-transform: uppercase; letter-spacing: .14em; color: var(--mute); }
-    .sc-cls {
-      font: 400 clamp(56px, 12vw, 200px)/.82 var(--serif);
-      letter-spacing: -.02em; margin: 8px 0 14px -.04em;
-    }
-    .sc-rows { border-top: 1px solid var(--line); }
-    .sc-rows div { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid var(--line); }
-    .sc-rows dt { font-size: 11px; text-transform: uppercase; letter-spacing: .14em; color: var(--mute); }
-    .sc-rows dd { font-variant-numeric: tabular-nums; }
-    .sc-bar { display: flex; height: 24px; margin-top: 14px; }
-    .sc-bar i { flex: 1; opacity: .5; }
-    .sc-bar i.on { opacity: 1; }
-    .sc-scale { display: flex; margin-top: 6px; font-size: 11px; color: var(--mute); }
-    .sc-scale span { flex: 1; text-align: center; }
-    .sc-scale .on { color: var(--ink); }
-    .sc-hint { margin-top: 10px; font-size: 11px; letter-spacing: .1em; color: var(--mute); }
-
-    /* nav */
-    #nav { position: fixed; z-index: 200; top: 10px; right: 8px; display: flex; }
+    /* ── Corners ─────────────────────────── */
+    .corner { position: fixed; z-index: 200; }
+    .tl { top: var(--edge); left: var(--edge); }
+    .tl a { display: inline-block; padding: .7em 0; margin: -.7em 0; text-decoration: none; }
+    .tl a:hover { text-decoration: underline; text-underline-offset: 3px; }
+    .tl span { display: block; margin-top: .7em; opacity: var(--quiet); }
+    .tr { top: var(--edge); right: var(--edge); display: flex; }
     .lnk {
-      display: inline-flex; align-items: center; justify-content: center; min-height: var(--hit); min-width: 44px; padding: 0 8px;
-      background: none; border: 0; border-radius: 0; cursor: pointer; color: var(--ink);
-      font: inherit; font-size: 12px; text-transform: uppercase; letter-spacing: .18em; text-decoration: none;
+      padding: .7em 0; margin: -.7em 0 -.7em 1.6em; background: none; border: 0; color: inherit; cursor: pointer;
+      opacity: var(--quiet); text-decoration: underline 1px transparent; text-underline-offset: 5px;
     }
-    .lnk:hover, .lnk[aria-expanded="true"] { text-decoration: underline; text-underline-offset: 6px; text-decoration-thickness: 1px; }
-    .lnk[aria-expanded="true"], .lnk:active { color: var(--acc); }
-    .lnk:focus-visible { outline: 1px solid var(--acc); outline-offset: -1px; }
+    .lnk:hover, .lnk:focus-visible, .lnk[aria-expanded="true"] { opacity: 1; text-decoration-color: var(--accent); }
+    .lnk:active { opacity: .6; }
+
+    #fps { position: fixed; z-index: 100; right: var(--edge); bottom: var(--edge); pointer-events: none; font-variant-numeric: tabular-nums; }
+    #fps span { opacity: var(--quiet); }
+
+    /* ── Rail: the sheet's sections ──────── */
+    #rail { position: fixed; z-index: 200; right: var(--edge); top: 50%; transform: translateY(-50%); width: var(--railw); text-align: right; line-height: 1.2; }
+    #rail ol { list-style: none; }
+    #rail button {
+      padding: .6em 0; background: none; border: 0; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit;
+      cursor: pointer; opacity: var(--quiet);
+    }
+    #rail button::after {
+      content: ''; display: inline-block; width: 10px; height: 1px; margin-left: .8em; vertical-align: middle;
+      background: currentColor; transition: width .25s cubic-bezier(.16, 1, .3, 1);
+    }
+    #rail button:hover, #rail button:focus-visible, #rail button.on { opacity: 1; }
+    #rail button.on::after { width: 28px; }
+
+    /* ── Bottom left: star card, caption, hint ── */
+    #bl {
+      position: fixed; z-index: 100; left: var(--edge); bottom: var(--edge); pointer-events: none;
+      display: flex; flex-direction: column; gap: 28px; opacity: 0; transition: opacity .6s ease .15s;
+    }
+    #bl.ready { opacity: 1; }
+    #caption { max-width: 12ch; font-size: var(--disp); font-weight: 500; line-height: .92; letter-spacing: -.04em; }
+    .hint { margin-top: 1.4em; opacity: var(--quiet); }
+    .for-touch { display: none; }
+    @media (hover: none) {
+      .for-mouse { display: none; }
+      .for-touch { display: inline; }
+    }
+
+    #star-info { width: 250px; }
+    #star-info:not(.visible) { display: none; }
+    .sc-label { opacity: var(--quiet); }
+    .sc-cls { margin: .1em 0 .2em -.04em; font-size: var(--disp); font-weight: 500; line-height: .92; letter-spacing: -.04em; }
+    .sc-rows div { display: flex; justify-content: space-between; padding: .5em 0; border-top: 1px solid var(--line); }
+    .sc-rows dt { opacity: var(--quiet); }
+    .sc-rows dd { font-variant-numeric: tabular-nums; }
+    .sc-bar { display: flex; gap: 2px; height: 14px; margin-top: 12px; }
+    .sc-bar i { flex: 1; opacity: .35; border-bottom: 2px solid transparent; }
+    .sc-bar i.on { opacity: 1; border-bottom-color: var(--accent); }
+    .sc-scale { display: flex; gap: 2px; margin-top: 6px; }
+    .sc-scale span { flex: 1; text-align: center; opacity: var(--quiet); }
+    .sc-scale .on { opacity: 1; }
+    .sc-hint { margin-top: 10px; opacity: var(--quiet); text-transform: none; letter-spacing: .02em; }
 
     /* ── Sheet ───────────────────────────── */
     #panel {
-      position: fixed; z-index: 300; top: 0; right: 0; bottom: 0; width: var(--pw); max-width: 100%;
-      background: var(--bg); border-left: 1px solid var(--line);
-      overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line2) transparent;
-      padding-bottom: 32px;
-      visibility: hidden; transform: translateX(100%);
-      transition: transform .5s cubic-bezier(.2, .7, .2, 1), visibility 0s .5s;
+      position: fixed; z-index: 300; top: 0; bottom: 0; right: calc(var(--railw) + var(--edge) * 2); width: var(--sheetw); max-width: 100%;
+      background: var(--ink); border-left: 1px solid var(--line); border-right: 1px solid var(--line);
+      overflow-y: auto; overscroll-behavior: contain; scroll-behavior: smooth;
+      scrollbar-width: thin; scrollbar-color: var(--line) transparent;
+      padding-top: var(--edge);
+      visibility: hidden; opacity: 0; transform: translateX(16px);
+      transition: opacity .3s ease, transform .4s cubic-bezier(.16, 1, .3, 1), visibility 0s .4s;
     }
-    #panel.open { visibility: visible; transform: none; transition-delay: 0s; }
-    .p-top { display: flex; align-items: center; justify-content: space-between; padding-left: 16px; }
-    #sheet-fps { color: var(--mute); font-variant-numeric: tabular-nums; }
-    #panel h2 {
-      font: 400 var(--disp)/.95 var(--serif); font-style: italic; letter-spacing: -.01em;
-      padding: 8px 16px 20px;
-    }
-    #about { padding: 0 16px 20px; color: var(--mute); }
-    #about li { list-style: none; padding: 6px 0; border-top: 1px solid var(--line); }
-    #about b { font-weight: 400; color: var(--ink); text-transform: uppercase; letter-spacing: .14em; font-size: 11px; }
+    #panel.open { visibility: visible; opacity: 1; transform: none; transition-delay: 0s; }
+    .p-top { display: none; }
 
     summary {
-      display: flex; align-items: center; gap: 12px; height: var(--sum); padding: 0 16px;
+      display: flex; align-items: center; gap: 1.2em; min-height: 44px; padding: 0 16px;
       list-style: none; cursor: pointer; border-top: 1px solid var(--line);
-      font-size: 11px; text-transform: uppercase; letter-spacing: .18em;
     }
     summary::-webkit-details-marker { display: none; }
-    summary::after { content: '+'; margin-left: auto; color: var(--mute); }
+    summary b { font-weight: 400; opacity: var(--quiet); }
+    summary::after { content: '+'; margin-left: auto; opacity: var(--quiet); }
     details[open] > summary::after { content: '−'; }
-    summary:hover { background: rgba(236, 230, 218, .05); }
-    summary:active { background: rgba(236, 230, 218, .1); }
-    summary:focus-visible { outline: 1px solid var(--acc); outline-offset: -3px; }
-    details:last-child { border-bottom: 1px solid var(--line); }
+    summary:hover { background: rgba(241, 237, 227, .04); }
+    summary:focus-visible { outline-offset: -2px; }
+    #about { min-height: calc(100% + var(--edge)); border-bottom: 1px solid var(--line); }
+    #about p { padding: 0 16px 1em; }
+    #about p:first-of-type { padding-top: 6px; }
+    #about a { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; text-underline-offset: 3px; }
 
     .row {
-      display: grid; grid-template-columns: 1fr auto; column-gap: 12px; align-items: center;
-      padding: 12px 16px 6px; border-top: 1px solid var(--line);
+      display: grid; grid-template-columns: 19ch 7ch 1fr; column-gap: 12px; align-items: center;
+      min-height: 44px; padding: 0 16px; border-top: 1px solid var(--line);
     }
-    .row > label, .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .18em; color: var(--mute); }
-    .row > output { font-variant-numeric: tabular-nums; }
-    .row > input[type=range], .row > select { grid-column: 1 / -1; }
-    .row > select { margin-bottom: 8px; }
-    .row.act { display: block; padding: 14px 16px 16px; }
-    .row.tog { padding: 0 16px; min-height: 44px; cursor: pointer; }
-    .row.tog:hover { background: rgba(236, 230, 218, .05); }
-    .row.tog:has(input:focus-visible) { outline: 1px solid var(--acc); outline-offset: -3px; }
-    .state::after { content: 'Off'; color: var(--mute); text-transform: uppercase; letter-spacing: .18em; font-size: 11px; }
-    .tog input:checked + .state::after { content: 'On'; color: var(--acc); }
+    .row > label, .lbl { opacity: var(--quiet); }
+    .row i { font-style: normal; text-transform: none; }
+    .row > output { text-align: right; font-variant-numeric: tabular-nums; }
+    .row > select { grid-column: 2 / -1; }
+    .row.act { display: block; padding: 12px 16px; }
+    .row.tog { cursor: pointer; }
+    .row.tog:hover { background: rgba(241, 237, 227, .04); }
+    .row.tog:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
+    .state { grid-column: 2; text-align: right; }
+    .state::after { content: 'Off'; opacity: var(--quiet); }
+    .tog input:checked + .state::after { content: 'On'; opacity: 1; }
 
-    input[type=range] {
-      -webkit-appearance: none; appearance: none; background: transparent;
-      width: 100%; height: var(--hit); cursor: pointer;
-    }
-    input[type=range]::-webkit-slider-runnable-track { height: 1px; background: var(--line2); }
-    input[type=range]::-webkit-slider-thumb {
-      -webkit-appearance: none; width: 1px; height: 16px; margin-top: -8px;
-      background: var(--ink); border: 0; border-radius: 0; box-shadow: none;
-    }
-    input[type=range]::-moz-range-track { height: 1px; background: var(--line2); }
-    input[type=range]::-moz-range-thumb { width: 1px; height: 16px; border: 0; border-radius: 0; background: var(--ink); }
-    input[type=range]:hover::-webkit-slider-thumb, input[type=range]:focus-visible::-webkit-slider-thumb,
-    input[type=range]:active::-webkit-slider-thumb { background: var(--acc); width: 3px; margin-left: -1px; }
-    input[type=range]:hover::-moz-range-thumb, input[type=range]:focus-visible::-moz-range-thumb, input[type=range]:active::-moz-range-thumb { background: var(--acc); width: 3px; }
-    input:focus-visible, select:focus-visible, button:focus-visible { outline: 1px solid var(--acc); outline-offset: 2px; }
+    input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 44px; background: transparent; cursor: pointer; }
+    input[type=range]::-webkit-slider-runnable-track { height: 1px; background: rgba(241, 237, 227, .34); }
+    input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 3px; height: 16px; margin-top: -8px; background: var(--accent); border: 0; border-radius: 0; }
+    input[type=range]::-moz-range-track { height: 1px; background: rgba(241, 237, 227, .34); }
+    input[type=range]::-moz-range-thumb { width: 3px; height: 16px; border: 0; border-radius: 0; background: var(--accent); }
+    input[type=range]:hover::-webkit-slider-thumb, input[type=range]:active::-webkit-slider-thumb { width: 5px; }
+    input[type=range]:hover::-moz-range-thumb, input[type=range]:active::-moz-range-thumb { width: 5px; }
+    input[type=range]:focus-visible { outline-offset: -2px; }
 
     select {
-      -webkit-appearance: none; appearance: none; width: 100%; height: var(--hit); padding: 0 20px 0 0;
-      background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='5'%3E%3Cpath d='M0 .5l4.5 4 4.5-4' fill='none' stroke='%23ece6da'/%3E%3C/svg%3E") no-repeat right 2px center;
-      color: var(--ink); font: inherit; letter-spacing: inherit; border: 0; border-bottom: 1px solid var(--line2); border-radius: 0; cursor: pointer;
+      -webkit-appearance: none; appearance: none; width: 100%; height: 32px; padding: 0 20px 0 0;
+      background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='5'%3E%3Cpath d='M0 .5l4.5 4 4.5-4' fill='none' stroke='%23f1ede3'/%3E%3C/svg%3E") no-repeat right 2px center;
+      color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit;
+      border: 0; border-bottom: 1px solid var(--line); border-radius: 0; cursor: pointer;
     }
-    select:hover { border-bottom-color: var(--ink); }
-    select option { background: #030305; color: #ece6da; }
+    select:hover { border-bottom-color: var(--paper); }
+    select option { background: #131314; color: #f1ede3; }
 
-    .btn {
-      width: 100%; height: calc(var(--hit) + 8px); background: transparent; color: var(--ink);
-      border: 1px solid var(--line2); border-radius: 0; cursor: pointer;
-      font: inherit; font-size: 11px; text-transform: uppercase; letter-spacing: .18em;
-    }
-    .btn:hover { border-color: var(--ink); }
-    .btn:active { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+    .btn { width: 100%; min-height: 44px; background: transparent; color: inherit; border: 1px solid rgba(241, 237, 227, .34); border-radius: 0; cursor: pointer; }
+    .btn:hover { border-color: var(--paper); }
+    .btn:active { background: var(--paper); color: var(--ink); }
 
-    /* Desktop: the nav stays above the sheet and its Controls link closes it */
-    @media (min-width: 769px) {
-      #nav { z-index: 400; }
-      .p-top { display: none; }
-      #panel h2 { padding-top: 48px; }
-    }
-
-    /* ── Phone: bottom sheet ─────────────── */
-    @media (max-width: 768px) {
-      :root { --hit: 44px; --sum: 44px; --disp: 9vw; }
-      #panel {
-        top: auto; left: 0; width: auto; max-height: 62vh;
-        border-left: 0; border-top: 1px solid var(--line2);
-        transform: translateY(100%);
+    /* ── Phones and short screens: no rail; the Controls link opens the sheet ── */
+    @media (max-width: 768px), (max-height: 480px) {
+      #rail { display: none; }
+      #panel { right: 0; border-right: 0; padding-top: 0; }
+      .p-top {
+        display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 1;
+        min-height: 44px; padding-left: 16px; background: var(--ink); border-bottom: 1px solid var(--line);
       }
-      .p-top { position: sticky; top: 0; z-index: 1; height: 44px; background: var(--bg); border-bottom: 1px solid var(--line); }
-      #panel h2 { padding: 12px 16px; }
-      #nav { top: 0; right: 4px; }
-      .row { padding-top: 8px; }
-      .row.act { padding: 8px 16px; }
-      #hud-title { top: 14px; }
-      #star-info { width: 200px; }
-      .sc-cls { font-size: max(20vw, 56px); margin-bottom: 10px; }
+      .p-top + details > summary { border-top: 0; }
+      #sheet-fps { opacity: var(--quiet); font-variant-numeric: tabular-nums; }
+      .p-top .lnk { min-height: 44px; margin: 0; padding: 0 16px; }
+      .tr .lnk, .tl a { display: inline-flex; align-items: center; min-height: 44px; padding: 0; margin-top: -14px; margin-bottom: -14px; }
+      .tr .lnk { margin-left: 1.6em; }
+    }
+    /* A phone upright: the sheet rises from the bottom */
+    @media (max-width: 768px) and (min-height: 481px) {
+      #panel {
+        top: auto; left: 0; width: auto; max-height: 62vh; max-height: 62dvh;
+        border-left: 0; border-top: 1px solid var(--line); transform: translateY(24px);
+      }
+      #about { min-height: calc(62dvh - 46px); }
+    }
+    /* Narrow or short: the readout moves under the links so the foot holds the caption and the card */
+    @media (max-width: 520px), (max-height: 480px) {
+      #fps { bottom: auto; top: calc(var(--edge) + 36px); }
+    }
+    @media (max-width: 520px) {
+      .row { grid-template-columns: 1fr 7ch 1.3fr; }
+    }
+    /* A phone on its side: the star card sits beside the caption */
+    @media (max-height: 480px) {
+      #bl { flex-direction: row; align-items: flex-end; }
+      #star-info { order: 2; }
+      .sc-label, .sc-hint { display: none; }
+      .sc-cls { font-size: 2.4rem; }
     }
 
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { animation: none !important; transition: none !important; }
-      #controls-hint.ready { opacity: 1; }
+      #panel { scroll-behavior: auto; }
     }
   </style>
 </head>
@@ -244,68 +223,60 @@
   <a href="#sim" class="skip-link">Skip to simulation</a>
 
   <div id="loading" role="status" aria-live="polite">
-    <div class="loading-wordmark">Galaxy <em>Sim</em></div>
+    <div id="loading-status" class="loading-status">Starting WebGPU</div>
     <div class="loading-spinner" aria-hidden="true"></div>
-    <div id="loading-status" class="loading-status">Initializing WebGPU&hellip;</div>
+    <div class="loading-wordmark">Galaxy.</div>
   </div>
 
-  <div id="hud-title" aria-hidden="true">
-    <span class="hud-title-main">Galaxy Sim</span>
-    <span class="hud-title-sub">N-body &middot; WebGPU &middot; Barnes-Hut</span>
+  <div class="corner tl">
+    <a href="https://joshtaylor.world/" target="_top">Josh Taylor</a>
+    <span>Galaxy</span>
   </div>
 
-  <nav id="nav" aria-label="Main">
+  <nav class="corner tr" aria-label="Simulation">
     <button type="button" id="nav-controls" class="lnk" aria-expanded="false" aria-controls="panel">Controls</button>
-    <button type="button" id="nav-about" class="lnk" aria-expanded="false" aria-controls="about">About</button>
     <button type="button" id="nav-reset" class="lnk">Reset</button>
   </nav>
 
-  <div id="caption" aria-hidden="true"><span id="cap-n">25,000</span> <em>stars</em> · <span id="cap-t">0.0</span> <em>Gyr</em></div>
+  <nav id="rail" aria-label="Control sections"><ol></ol></nav>
+
+  <div id="bl">
+    <div id="star-info" aria-live="polite">
+      <div class="sc-label">Spectral class</div>
+      <div class="sc-cls"></div>
+      <dl class="sc-rows">
+        <div><dt>Mass</dt><dd class="sc-mass"></dd></div>
+        <div><dt>Temp</dt><dd class="sc-temp"></dd></div>
+        <div><dt>Planets</dt><dd class="sc-planets"></dd></div>
+      </dl>
+      <div class="sc-bar" role="img" aria-label="Blackbody colour">
+        <i style="background:#9bb0ff"></i><i style="background:#aabfff"></i><i style="background:#cad7ff"></i><i style="background:#f8f7ff"></i><i style="background:#fff4ea"></i><i style="background:#ffd2a1"></i><i style="background:#ffcc6f"></i>
+      </div>
+      <div class="sc-scale" aria-hidden="true"><span>O</span><span>B</span><span>A</span><span>F</span><span>G</span><span>K</span><span>M</span></div>
+      <div class="sc-hint"><span class="for-mouse">Scroll in to visit. Esc to release.</span><span class="for-touch">Pinch in to visit. Tap empty sky to release.</span></div>
+    </div>
+    <div>
+      <div id="caption" aria-hidden="true"><span id="cap-n">25,000</span> stars, <span id="cap-t">0.0</span> Gyr.</div>
+      <p class="hint" aria-hidden="true">
+        <span class="for-mouse">Drag · Scroll · Right-drag</span>
+        <span class="for-touch">One finger · Pinch · Two fingers</span>
+      </p>
+    </div>
+  </div>
+
   <div id="fps" aria-live="off" aria-atomic="true"></div>
-
-  <div id="star-info" aria-live="polite">
-    <div class="sc-label">Spectral class</div>
-    <div class="sc-cls"></div>
-    <dl class="sc-rows">
-      <div><dt>Mass</dt><dd class="sc-mass"></dd></div>
-      <div><dt>Temp</dt><dd class="sc-temp"></dd></div>
-      <div><dt>Planets</dt><dd class="sc-planets"></dd></div>
-    </dl>
-    <div class="sc-bar" role="img" aria-label="Blackbody colour">
-      <i style="background:#9bb0ff"></i><i style="background:#aabfff"></i><i style="background:#cad7ff"></i><i style="background:#f8f7ff"></i><i style="background:#fff4ea"></i><i style="background:#ffd2a1"></i><i style="background:#ffcc6f"></i>
-    </div>
-    <div class="sc-scale" aria-hidden="true"><span>O</span><span>B</span><span>A</span><span>F</span><span>G</span><span>K</span><span>M</span></div>
-    <div class="sc-hint">Scroll in to visit<br>Esc to release</div>
-  </div>
-
-  <div id="controls-hint" aria-hidden="true">
-    <div class="hint-mouse">
-      Drag &nbsp;&middot;&nbsp; Rotate<br>
-      Scroll &nbsp;&middot;&nbsp; Zoom<br>
-      Right-drag &nbsp;&middot;&nbsp; Pan<br>
-      H &nbsp;&middot;&nbsp; Toggle Panel
-    </div>
-    <div class="hint-touch">
-      One finger rotate<br>
-      Pinch zoom<br>
-      Two fingers pan
-    </div>
-  </div>
 
   <aside id="panel" aria-label="Controls">
     <div class="p-top"><span id="sheet-fps"></span><button type="button" id="sheet-close" class="lnk">Close</button></div>
-    <h2>Controls</h2>
-    <ul id="about" hidden>
-      <li><b>Gravity</b> Barnes-Hut octree on the GPU, tree rebuilt in a worker.</li>
-      <li><b>Dark matter</b> Hernquist halo per galaxy, flat rotation curves.</li>
-      <li><b>Disk</b> Equilibrium exponential disk and bulge, set by Toomre Q.</li>
-      <li><b>Gas</b> Cools, settles, and forms stars where dense.</li>
-      <li><b>Stars</b> Kroupa masses, blackbody colours, giants and supernovae.</li>
-      <li><b>Systems</b> Click a star and zoom in to visit its planets.</li>
-    </ul>
+    <details open id="about"><summary><b>05</b>About</summary>
+      <p>At McMaster I simulated a galaxy in Fortran 90 and watched a star cluster form its own spiral arms. This is the same idea again, in a browser tab, where you can turn it over with a mouse.</p>
+      <p>Every star pulls on every other. A Barnes-Hut tree groups the far ones, and the graphics card does the work through WebGPU. About 30% of the disc is gas that cools, settles thin, and turns into new stars where it gets dense. The heaviest stars end as supernovae and hand their matter back to the gas.</p>
+      <p>Click a star and keep zooming, and the view crosses into that star's own solar system.</p>
+      <p><a href="https://github.com/FlaccidNoise/galaxy-sim" target="_blank" rel="noopener">Source</a></p>
+    </details>
   </aside>
 
-  <main id="sim" aria-label="Galaxy N-body simulation" tabindex="-1"></main>
+  <main id="sim" aria-label="Galaxy simulation" tabindex="-1"></main>
 
   <script type="module" src="src/main.js"></script>
 </body>
