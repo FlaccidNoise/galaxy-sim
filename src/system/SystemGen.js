@@ -66,23 +66,44 @@ export function luminosity(M) {
   return 1.4 * Math.pow(M, 3.5);
 }
 
-export function generateSystem(stellarMass, birthTime, seed) {
-  // Seed from the star's intrinsic float bits — stable across tree re-sorts
+/**
+ * Current state of a star aged ageMyr: mirrors starState() in render.wgsl.
+ * Visual radius grows as √(R/R_ms) so a red giant swells past the inner
+ * orbits without filling the view. lum feeds planet temperatures.
+ */
+export function evolveStar(M, ageMyr) {
+  const tMS = 10000 * Math.pow(M, -2.5);
+  const tGiant = tMS * 0.12 + 15;
+  const tempMS = 5778 * Math.pow(M, 0.54);   // matches starState() in render.wgsl
+  const lumMS = luminosity(M);
+  const rMS = 0.35 * Math.pow(M, 0.8);
+  if (ageMyr < tMS) return { phase: 'main', tempK: tempMS, lum: lumMS, radius: rMS, class: spectralClass(tempMS) };
+  if (ageMyr < tMS + tGiant) {
+    const f = (ageMyr - tMS) / tGiant;
+    const tempK = tempMS + (3400 - tempMS) * Math.min(f * 2.5, 1);
+    const lum = lumMS * (1 + 59 * f * f);
+    const growth = Math.sqrt(lum / lumMS) * Math.pow(tempMS / tempK, 2);   // L = R²T⁴
+    return { phase: 'giant', tempK, lum, radius: rMS * Math.sqrt(growth), class: spectralClass(tempK) };
+  }
+  if (M >= 8) return { phase: 'neutron star', tempK: 40000, lum: 0.0005, radius: rMS * 0.08, class: 'NS' };
+  const tempK = 14000 / (1 + (ageMyr - tMS - tGiant) * 2e-4);
+  return { phase: 'white dwarf', tempK, lum: 0.004, radius: rMS * 0.15, class: 'WD' };
+}
+
+export function generateSystem(stellarMass, birthTime, seed, ageMyr = -birthTime) {
+  // Seed from the star's intrinsic float bits — stable across tree re-sorts.
+  // Age must not enter the seed: the same star reselected later keeps its planets.
   const f = new Float32Array([stellarMass, birthTime, seed]);
   const u = new Uint32Array(f.buffer);
   const rand = mulberry32(u[0] ^ Math.imul(u[1], 0x9E3779B9) ^ Math.imul(u[2], 0x85EBCA6B));
 
   const M = Math.max(stellarMass, 0.08);
-  const lum = luminosity(M);
-  const tempK = 5778 * Math.pow(M, 0.54);   // matches starState() in render.wgsl
+  const lum = luminosity(M);   // at formation: sets the disc's frost line and zones
   const sqrtL = Math.sqrt(lum);
   const frostLine = 2.7 * sqrtL;
+  const rMS = 0.35 * Math.pow(M, 0.8);
 
-  const star = {
-    mass: M, lum, tempK,
-    class: spectralClass(tempK),
-    radius: 0.35 * Math.pow(M, 0.8),
-  };
+  const star = { mass: M, ...evolveStar(M, ageMyr) };
 
   // Hot massive stars: sparse scorched systems. Red dwarfs: tight and small
   // (orbit spacing scales with √L).
@@ -96,7 +117,7 @@ export function generateSystem(stellarMass, birthTime, seed) {
 
   const planets = [];
   let au = (0.1 + 0.3 * rand()) * sqrtL;   // innermost orbit, physical AU
-  const scale = Math.max(1, star.radius * 3 / au);   // rendered units per AU
+  const scale = Math.max(1, rMS * 3 / au);   // rendered units per AU
   for (let i = 0; i < count; i++) {
     const a = au * scale;
     let kind, radius;
@@ -123,7 +144,7 @@ export function generateSystem(stellarMass, birthTime, seed) {
     }
     radius = Math.min(radius, 0.12 * a);   // tight red-dwarf orbits: no engulfing the star or neighbours
     const planet = {
-      a, au, teq: 255 * Math.pow(lum, 0.25) / Math.sqrt(au),   // K, Earth-like albedo
+      a, au, teq: 255 * Math.pow(star.lum, 0.25) / Math.sqrt(au),   // K today, Earth-like albedo
       phase: rand() * 2 * Math.PI, rate: orbitRate(a),
       radius, kind, seed: rand(), p1: rand(), p2: rand(),
       rings: null, moons: [],
@@ -143,7 +164,7 @@ export function generateSystem(stellarMass, birthTime, seed) {
       });
       ma *= 1.6 + 0.4 * rand();
     }
-    planets.push(planet);
+    if (a > star.radius * 1.3) planets.push(planet);   // a swollen giant star engulfs its inner planets
     au *= 1.4 + 0.6 * rand();
   }
 
@@ -159,7 +180,7 @@ export function generateSystem(stellarMass, birthTime, seed) {
         beltA = Math.sqrt(planets[i].a * planets[i + 1].a);
       }
     }
-    belt = { a: beltA, width: beltA * 0.15, count: 3000, seed: Math.floor(rand() * 0xffffffff) };
+    if (beltA > star.radius * 1.5) belt = { a: beltA, width: beltA * 0.15, count: 3000, seed: Math.floor(rand() * 0xffffffff) };
   }
 
   return { star, planets, belt, frost: frostLine * scale };   // frost: rendered units

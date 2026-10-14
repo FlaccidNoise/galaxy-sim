@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mulberry32, generateSystem, spectralClass, KIND, bodyPositions } from '../src/system/SystemGen.js';
+import { mulberry32, generateSystem, evolveStar, luminosity, spectralClass, KIND, bodyPositions } from '../src/system/SystemGen.js';
 
 test('mulberry32 is deterministic and in [0,1)', () => {
   const a = mulberry32(42), b = mulberry32(42);
@@ -22,8 +22,8 @@ test('different seeds give different systems', () => {
 test('giants form past the frost line, except a lone warm Jupiter at the innermost slot', () => {
   let warm = 0;
   for (let i = 0; i < 2000; i++) {
-    const sys = generateSystem(0.5 + i * 0.001, -i * 13, (i * 7 % 1000) / 1000);
-    const frost = 2.7 * Math.sqrt(sys.star.lum);
+    const sys = generateSystem(0.5 + i * 0.001, -i * 13, (i * 7 % 1000) / 1000, 500);
+    const frost = 2.7 * Math.sqrt(luminosity(sys.star.mass));   // the disc's frost line, at formation
     sys.planets.forEach((p, j) => {
       if (p.kind !== KIND.GAS && p.kind !== KIND.ICE_GIANT) return;
       if (p.au < frost) { assert.equal(j, 0); assert.equal(p.kind, KIND.GAS); warm++; }
@@ -36,7 +36,7 @@ test('giants are rare around red dwarfs and old stars', () => {
   const giantShare = (M, birth) => {
     let n = 0;
     for (let i = 0; i < 500; i++) {
-      if (generateSystem(M, birth - i, i / 500).planets.some(p => p.kind === KIND.GAS || p.kind === KIND.ICE_GIANT)) n++;
+      if (generateSystem(M, birth - i, i / 500, 500).planets.some(p => p.kind === KIND.GAS || p.kind === KIND.ICE_GIANT)) n++;
     }
     return n / 500;
   };
@@ -127,4 +127,24 @@ test('bodyPositions follows the shader orbit formula and buffer order', () => {
       assert.equal(bodies[i++].moon, true);
     }
   }
+});
+
+test('stellar evolution: a red giant swallows inner planets, remnants keep the rest', () => {
+  const young = generateSystem(1.0, -1000, 0, 1000);
+  const giant = generateSystem(1.0, -1000, 0, 10000 + 600);   // t_MS = 10 Gyr, giant phase 1.2 Gyr
+  const dwarf = generateSystem(1.0, -1000, 0, 20000);
+  assert.ok(young.planets.length >= 3, 'fixture needs planets');
+  assert.equal(giant.star.phase, 'giant');
+  assert.ok(giant.star.radius > young.star.radius * 2);
+  assert.ok(giant.planets.length < young.planets.length);
+  assert.equal(dwarf.star.phase, 'white dwarf');
+  assert.equal(dwarf.star.class, 'WD');
+  // Same ladder regardless of age: survivors sit on the same orbits with the same kinds
+  for (const p of giant.planets) {
+    const twin = young.planets.find(q => q.au === p.au);
+    assert.ok(twin && twin.kind === p.kind);
+  }
+  assert.deepEqual(dwarf.planets.map(p => [p.au, p.kind]), young.planets.map(p => [p.au, p.kind]));
+  assert.ok(dwarf.planets[0].teq < young.planets[0].teq / 3);
+  assert.equal(evolveStar(10, 1e6).phase, 'neutron star');
 });

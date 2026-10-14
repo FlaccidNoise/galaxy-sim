@@ -137,7 +137,7 @@ function select(idx, record) {
   shiftCameraTarget(idx, -1);
   selection = {
     idx,
-    system: generateSystem(record[0], record[1], record[2]),
+    system: generateSystem(record[0], record[1], record[2], simTime * (controls?.state.agingRate ?? 0) - record[1]),
   };
   renderer.selectedIdx = idx;
   focusIdx = 0; focusCur = [0, 0, 0]; focusT = 1;
