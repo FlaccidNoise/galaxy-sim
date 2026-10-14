@@ -59,6 +59,13 @@ export function spectralClass(tempK) {
   return 'M';
 }
 
+// Main-sequence mass–luminosity relation, piecewise (continuous at the joins)
+export function luminosity(M) {
+  if (M < 0.43) return 0.23 * Math.pow(M, 2.3);
+  if (M < 2) return Math.pow(M, 4);
+  return 1.4 * Math.pow(M, 3.5);
+}
+
 export function generateSystem(stellarMass, birthTime, seed) {
   // Seed from the star's intrinsic float bits — stable across tree re-sorts
   const f = new Float32Array([stellarMass, birthTime, seed]);
@@ -66,7 +73,7 @@ export function generateSystem(stellarMass, birthTime, seed) {
   const rand = mulberry32(u[0] ^ Math.imul(u[1], 0x9E3779B9) ^ Math.imul(u[2], 0x85EBCA6B));
 
   const M = Math.max(stellarMass, 0.08);
-  const lum = Math.pow(M, 3.5);
+  const lum = luminosity(M);
   const tempK = 5778 * Math.pow(M, 0.54);   // matches starState() in render.wgsl
   const sqrtL = Math.sqrt(lum);
   const frostLine = 2.7 * sqrtL;
@@ -81,6 +88,11 @@ export function generateSystem(stellarMass, birthTime, seed) {
   // (orbit spacing scales with √L).
   const maxPlanets = M >= 8 ? 3 : 8;
   const count = Math.min(Math.floor(rand() * 9), maxPlanets);
+  // Giant cores need a massive, metal-rich disc: odds per outer slot scale with
+  // stellar mass and halve for the oldest (metal-poor) stars. birthTime is Myr before t=0.
+  const ageGyr = Math.min(Math.max(-birthTime / 1000, 0), 12);
+  const pGiant = Math.min(1, 0.5 * M) * (1 - ageGyr / 24);
+  const warmJupiter = M > 0.5 && rand() < 0.02;   // migrated giant at the innermost slot
 
   const planets = [];
   let au = (0.1 + 0.3 * rand()) * sqrtL;   // innermost orbit, physical AU
@@ -88,21 +100,28 @@ export function generateSystem(stellarMass, birthTime, seed) {
   for (let i = 0; i < count; i++) {
     const a = au * scale;
     let kind, radius;
-    if (au < frostLine) {
+    if (i === 0 && warmJupiter) {
+      kind = KIND.GAS;
+      radius = 0.15 + 0.2 * rand();
+    } else if (au < frostLine) {
       radius = 0.02 + 0.05 * rand();
       const hz = au >= 0.95 * sqrtL && au <= 1.4 * sqrtL;
       kind = hz ? KIND.TERRAN
            : au < 0.5 * sqrtL ? KIND.SCORCHED
            : au < 0.95 * sqrtL ? KIND.VENUSIAN
            : KIND.ICY;
-    } else {
+    } else if (rand() < pGiant) {
       // Gas giants form just past the frost line; ice giants dominate further out
       kind = rand() < Math.min(0.9, 0.1 + (au / frostLine - 1) / 4) ? KIND.ICE_GIANT : KIND.GAS;
       radius = kind === KIND.GAS ? 0.15 + 0.2 * rand() : 0.1 + 0.08 * rand();
+    } else {
+      kind = KIND.ICY;   // failed core: an ice dwarf
+      radius = 0.02 + 0.04 * rand();
     }
     radius = Math.min(radius, 0.12 * a);   // tight red-dwarf orbits: no engulfing the star or neighbours
     const planet = {
-      a, au, phase: rand() * 2 * Math.PI, rate: orbitRate(a),
+      a, au, teq: 255 * Math.pow(lum, 0.25) / Math.sqrt(au),   // K, Earth-like albedo
+      phase: rand() * 2 * Math.PI, rate: orbitRate(a),
       radius, kind, seed: rand(), p1: rand(), p2: rand(),
       rings: null, moons: [],
     };

@@ -19,15 +19,29 @@ test('different seeds give different systems', () => {
   assert.notDeepEqual(generateSystem(1.0, -4500, 0.7315), generateSystem(1.0, -4500, 0.7316));
 });
 
-test('planet kinds respect the frost line', () => {
-  for (let i = 0; i < 200; i++) {
-    const sys = generateSystem(0.5 + i * 0.01, -i * 13, i / 200);
+test('giants form past the frost line, except a lone warm Jupiter at the innermost slot', () => {
+  let warm = 0;
+  for (let i = 0; i < 2000; i++) {
+    const sys = generateSystem(0.5 + i * 0.001, -i * 13, (i * 7 % 1000) / 1000);
     const frost = 2.7 * Math.sqrt(sys.star.lum);
-    for (const p of sys.planets) {
-      if (p.kind === KIND.GAS || p.kind === KIND.ICE_GIANT) assert.ok(p.au >= frost);
-      else assert.ok(p.au < frost);
-    }
+    sys.planets.forEach((p, j) => {
+      if (p.kind !== KIND.GAS && p.kind !== KIND.ICE_GIANT) return;
+      if (p.au < frost) { assert.equal(j, 0); assert.equal(p.kind, KIND.GAS); warm++; }
+    });
   }
+  assert.ok(warm > 0 && warm < 100, `${warm} warm Jupiters in 2000 systems`);
+});
+
+test('giants are rare around red dwarfs and old stars', () => {
+  const giantShare = (M, birth) => {
+    let n = 0;
+    for (let i = 0; i < 500; i++) {
+      if (generateSystem(M, birth - i, i / 500).planets.some(p => p.kind === KIND.GAS || p.kind === KIND.ICE_GIANT)) n++;
+    }
+    return n / 500;
+  };
+  assert.ok(giantShare(0.2, -3000) < giantShare(1.0, -3000) / 2);
+  assert.ok(giantShare(1.0, -11000) < giantShare(1.0, -1000));
 });
 
 test('rendered orbits are the physical ladder under one scale, and red dwarfs get rocky planets', () => {
