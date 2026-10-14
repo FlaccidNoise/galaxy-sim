@@ -72,7 +72,7 @@ function updateStarInfo() {
   const lit = 'OBAFGKM'.indexOf(star.class);
   el.querySelector('.sc-cls').textContent = star.class;
   el.querySelector('.sc-mass').textContent = `${star.mass.toFixed(2)} M☉`;
-  el.querySelector('.sc-temp').textContent = `${Math.round(star.tempK).toLocaleString()} K`;
+  el.querySelector('.sc-temp').textContent = star.tempK ? `${Math.round(star.tempK).toLocaleString()} K` : '—';
   el.querySelector('.sc-planets').textContent = `${planets.length}${belt ? ' · belt' : ''}`;
   el.querySelector('.sc-bar').setAttribute('aria-label', `Blackbody colour, class ${star.class}`);
   el.querySelectorAll('.sc-bar i, .sc-scale span').forEach((n, i) => n.classList.toggle('on', i % 7 === lit));

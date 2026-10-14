@@ -58,13 +58,14 @@ export function bodyPositions(system, t) {
   return out;
 }
 
+// Class boundaries at the subtype midpoints of Pecaut & Mamajek's dwarf table
 export function spectralClass(tempK) {
-  if (tempK >= 30000) return 'O';
-  if (tempK >= 10000) return 'B';
-  if (tempK >= 7500) return 'A';
-  if (tempK >= 6000) return 'F';
-  if (tempK >= 5200) return 'G';
-  if (tempK >= 3700) return 'K';
+  if (tempK >= 31650) return 'O';
+  if (tempK >= 10050) return 'B';
+  if (tempK >= 7310) return 'A';
+  if (tempK >= 5960) return 'F';
+  if (tempK >= 5325) return 'G';
+  if (tempK >= 3890) return 'K';
   return 'M';
 }
 
@@ -76,37 +77,42 @@ export function luminosity(M) {
   return 1.4 * Math.pow(M, 3.5);
 }
 
+export function temperature(M) {
+  if (M < 0.37) return 3430 * Math.pow(M / 0.37, 0.18);
+  if (M < 0.57) return 3850 * Math.pow(M / 0.57, 0.27);
+  if (M < 1) return 5778 * Math.pow(M, 0.72);
+  return Math.min(5778 * Math.pow(M, 0.6), 33300 * Math.pow(M / 20, 0.27));   // O stars top out near 45,000 K
+}
+
 /**
  * Current state of a star aged ageMyr: mirrors starState() in render.wgsl.
  * Visual radius grows as √(R/R_ms) so a red giant swells past the inner
- * orbits without filling the view. lum feeds planet temperatures. reach is
- * the largest radius the star has had: what it swallowed stays swallowed.
+ * orbits without filling the view. lum feeds planet temperatures. reachAU is
+ * the farthest the star's surface (plus tides) has ever reached, in physical
+ * AU: what it swallowed stays swallowed. ~1.15 AU for the Sun (Schröder &
+ * Smith 2008), scaling as M^0.65 toward red supergiants.
  */
-export function temperature(M) {
-  return M < 0.57 ? 4100 * Math.pow(M / 0.57, 0.25) : 5778 * Math.pow(M, 0.6);
-}
-
 export function evolveStar(M, ageMyr) {
   const tMS = 10000 * Math.pow(M, -2.5);
   const tGiant = tMS * 0.12 + 15;
   const tempMS = temperature(M);
   const lumMS = luminosity(M);
   const rMS = 0.35 * Math.pow(M, 0.8);
-  if (ageMyr < tMS) return { phase: 'main', tempK: tempMS, lum: lumMS, radius: rMS, reach: rMS, class: spectralClass(tempMS) };
-  const giantRadius = f => {   // L = R²T⁴, with L and T at giant-phase fraction f
-    const tempK = tempMS + (3400 - tempMS) * Math.min(f * 2.5, 1);
-    return rMS * Math.sqrt(Math.sqrt(1 + 59 * f * f) * Math.pow(tempMS / tempK, 2));
-  };
+  if (ageMyr < tMS) return { phase: 'main', tempK: tempMS, lum: lumMS, radius: rMS, reachAU: 0, class: spectralClass(tempMS) };
+  const giantTemp = f => tempMS + (3400 - tempMS) * Math.min(f * 2.5, 1);
+  const growth = f => Math.sqrt(1 + 59 * f * f) * Math.pow(tempMS / giantTemp(f), 2);   // R/R_ms from L = R²T⁴
+  const swallowAU = 1.15 * Math.pow(M, 0.65);
   if (ageMyr < tMS + tGiant) {
     const f = (ageMyr - tMS) / tGiant;
-    const tempK = tempMS + (3400 - tempMS) * Math.min(f * 2.5, 1);
-    const radius = giantRadius(f);
-    return { phase: 'giant', tempK, lum: lumMS * (1 + 59 * f * f), radius, reach: radius, class: spectralClass(tempK) };
+    const tempK = giantTemp(f);
+    return { phase: 'giant', tempK, lum: lumMS * (1 + 59 * f * f), radius: rMS * Math.sqrt(growth(f)),
+             reachAU: swallowAU * growth(f) / growth(1), class: spectralClass(tempK) };
   }
-  const reach = giantRadius(1);
-  if (M >= 8) return { phase: 'neutron star', tempK: 40000, lum: 0.0005, radius: rMS * 0.08, reach, class: 'NS' };
-  const tempK = 14000 / (1 + (ageMyr - tMS - tGiant) * 2e-4);
-  return { phase: 'white dwarf', tempK, lum: 0.004, radius: rMS * 0.15, reach, class: 'WD' };
+  if (M >= 25) return { phase: 'black hole', tempK: 0, lum: 0, radius: rMS * 0.02, reachAU: swallowAU, class: 'BH' };
+  if (M >= 8) return { phase: 'neutron star', tempK: 40000, lum: 0.0005, radius: rMS * 0.08, reachAU: swallowAU, class: 'NS' };
+  // White dwarf cooling: fit to the Montreal 0.6 M☉ DA track, ±10% from 10 Myr to 10 Gyr
+  const tempK = Math.min(1e5, 66400 * Math.pow(Math.max(ageMyr - tMS - tGiant, 1e-3), -0.297));
+  return { phase: 'white dwarf', tempK, lum: 0.0059 * Math.pow(tempK / 14000, 4), radius: rMS * 0.15, reachAU: swallowAU, class: 'WD' };
 }
 
 export function generateSystem(stellarMass, birthTime, seed, ageMyr = -birthTime) {
@@ -148,7 +154,7 @@ export function generateSystem(stellarMass, birthTime, seed, ageMyr = -birthTime
       radius = 0.07 + 0.03 * rand();
     } else if (au < frostLine) {
       radius = 0.02 + 0.05 * rand();
-      const hz = au >= 0.95 * sqrtL && au <= 1.4 * sqrtL;
+      const hz = au >= 0.95 * sqrtL && au <= 1.68 * sqrtL;   // runaway to maximum greenhouse (Kopparapu 2014)
       const small = radius < 0.035;   // Mars-sized: too little gravity to keep an atmosphere
       kind = hz ? (small ? KIND.ROCKY : KIND.TERRAN)
            : au < 0.5 * sqrtL ? KIND.SCORCHED
@@ -214,15 +220,24 @@ export function generateSystem(stellarMass, birthTime, seed, ageMyr = -birthTime
     }
   }
   const hasBelt = rand() < 0.7, beltSeed = Math.floor(rand() * 0xffffffff);
-  const belt = hasBelt && beltA > star.reach * 1.5 ? { a: beltA, width: beltA * 0.15, count: 3000, seed: beltSeed } : null;
+  const belt = hasBelt && beltA / scale > star.reachAU ? { a: beltA, width: beltA * 0.15, count: 3000, seed: beltSeed } : null;
 
-  // A swollen giant star engulfs its inner planets, for good
-  planets = planets.filter(p => p.a * (1 - p.e) > star.reach * 1.3);
-  if (star.phase !== 'main') {   // an evolved star boils or freezes the worlds that had air
+  // A swollen giant star engulfs everything whose pericentre lies inside its reach, for good
+  planets = planets.filter(p => p.au * (1 - p.e) > star.reachAU);
+  if (star.phase === 'giant') {   // the drawn star never covers a survivor's orbit
+    star.radius = Math.max(rMS, Math.min(star.radius, 0.8 * star.reachAU * scale));
+  }
+  if (star.phase === 'white dwarf') {   // orbits widen as the star sheds its envelope: a ∝ 1/M_star
+    const grow = M / (0.45 + 0.1 * M);
+    for (const p of planets) { p.a *= grow; p.au *= grow; p.rate = orbitRate(p.a); p.teq /= Math.sqrt(grow); }
+    if (belt) { belt.a *= grow; belt.width *= grow; }
+  }
+  if (star.phase !== 'main') {   // an evolved star boils or freezes the worlds that had air; same cuts as the ladder
     for (const p of planets) {
       if (p.kind !== KIND.TERRAN && p.kind !== KIND.VENUSIAN) continue;
-      if (p.teq > 400) p.kind = KIND.SCORCHED;
-      else if (p.teq < 180) p.kind = KIND.ICY;
+      if (p.teq > 361) p.kind = KIND.SCORCHED;
+      else if (p.teq > 262) p.kind = KIND.VENUSIAN;
+      else if (p.teq < 197) p.kind = KIND.ICY;
     }
   }
 

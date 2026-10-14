@@ -126,9 +126,14 @@ test('main-sequence laws: Sun-normalised, continuous, M dwarfs near 3000 K', () 
   assert.ok(Math.abs(temperature(0.57) / temperature(0.5699) - 1) < 0.02);
   assert.ok(Math.abs(luminosity(0.43) / luminosity(0.4299) - 1) < 0.05);
   assert.ok(Math.abs(luminosity(2) / luminosity(1.999) - 1) < 0.05);
+  assert.ok(Math.abs(temperature(0.37) / temperature(0.3699) - 1) < 0.02);
+  assert.ok(Math.abs(temperature(1) / temperature(0.9999) - 1) < 0.02);
   assert.ok(temperature(0.15) > 2800 && temperature(0.15) < 3200);
   assert.equal(spectralClass(temperature(0.15)), 'M');
+  assert.equal(spectralClass(temperature(0.5)), 'M');   // M1V, not K
+  assert.equal(spectralClass(temperature(0.7)), 'K');
   assert.equal(spectralClass(temperature(3)), 'B');
+  assert.ok(temperature(60) < 46000);   // O3V tops out near 45,000 K
 });
 
 test('spectral classes', () => {
@@ -172,6 +177,12 @@ test('stellar evolution: a red giant swallows inner planets, remnants keep the r
   assert.ok(giant.planets.length < young.planets.length);
   assert.equal(dwarf.star.phase, 'white dwarf');
   assert.equal(dwarf.star.class, 'WD');
+  assert.ok(dwarf.star.tempK > 4000 && dwarf.star.tempK < 5000);   // ~8.8 Gyr of cooling: Montreal track gives ~4,200 K
+  // Engulfment is physical: everything with pericentre inside ~1.15 AU is gone by the giant's end
+  assert.ok(young.planets.some(p => p.au * (1 - p.e) < 1.15), 'fixture needs an inner planet');
+  assert.ok(generateSystem(1.0, -1000, 0, 11199).planets.every(p => p.au * (1 - p.e) > 1.1));
+  assert.equal(evolveStar(30, 1e6).phase, 'black hole');
+  assert.equal(evolveStar(30, 1e6).lum, 0);
   // Same ladder regardless of age: survivors sit on the same orbits; only worlds with air change kind
   for (const p of giant.planets) {
     const twin = young.planets.find(q => q.au === p.au);
@@ -180,8 +191,10 @@ test('stellar evolution: a red giant swallows inner planets, remnants keep the r
   // What the giant swallowed stays swallowed: the remnant keeps exactly the late giant's survivors
   const lateGiant = generateSystem(1.0, -1000, 0, 11199);
   assert.ok(lateGiant.planets.length < giant.planets.length);
-  assert.deepEqual(dwarf.planets.map(p => p.au), lateGiant.planets.map(p => p.au));
-  assert.ok(dwarf.star.reach > dwarf.star.radius * 10);
+  // ...and their orbits widen by M / M_wd as the envelope goes
+  const grow = 1 / 0.55;
+  assert.deepEqual(dwarf.planets.map(p => +(p.au / grow).toFixed(9)), lateGiant.planets.map(p => +p.au.toFixed(9)));
+  assert.ok(dwarf.star.reachAU > 1);
   assert.equal(dwarf.belt?.a, young.belt?.a);
   assert.ok(dwarf.planets[0].teq < young.planets[0].teq / 3);
   // Worlds with air freeze around a white dwarf and boil under a red giant

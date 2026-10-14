@@ -78,10 +78,17 @@ fn luminosity(M : f32) -> f32 {
     return 1.4 * pow(M, 3.5);
 }
 
+fn temperature(M : f32) -> f32 {
+    if (M < 0.37) { return 3430.0 * pow(M / 0.37, 0.18); }
+    if (M < 0.57) { return 3850.0 * pow(M / 0.57, 0.27); }
+    if (M < 1.0) { return 5778.0 * pow(M, 0.72); }
+    return min(5778.0 * pow(M, 0.6), 33300.0 * pow(M / 20.0, 0.27));
+}
+
 fn starState(M : f32, ageIn : f32, seed : f32) -> StarState {
     let tMS = 10000.0 * pow(M, -2.5);
     let tGiant = tMS * 0.12 + 15.0;
-    let tempMS = select(5778.0 * pow(M, 0.6), 4100.0 * pow(M / 0.57, 0.25), M < 0.57);
+    let tempMS = temperature(M);
     let snDur = 15.0;   // Myr — stretched so a flash lasts ~1 s of real time
 
     // Lifecycle is linear: the star-formation compute pass returns massive
@@ -102,15 +109,19 @@ fn starState(M : f32, ageIn : f32, seed : f32) -> StarState {
         if (sn < snDur) {
             let f = sn / snDur;
             s.temp = 9000.0;
-            s.lum = 5.0e4 * exp(-5.0 * f);
+            s.lum = max(5.0e4, 600.0 * luminosity(M)) * exp(-5.0 * f);   // ten times the giant it came from
+        } else if (M >= 25.0) {
+            s.temp = 0.0;      // black hole: nothing to see
+            s.lum = 0.0;
         } else {
             s.temp = 40000.0;  // neutron star: hot, vanishingly dim
             s.lum = 0.0005;
         }
     } else {
-        let cool = (ageMyr - tMS - tGiant) * 2.0e-4;
-        s.temp = 14000.0 / (1.0 + cool);
-        s.lum = 0.004;
+        // White dwarf cooling, fit to the Montreal 0.6 M☉ DA track — mirrors evolveStar()
+        let cool = max(ageMyr - tMS - tGiant, 1e-3);
+        s.temp = min(1.0e5, 66400.0 * pow(cool, -0.297));
+        s.lum = 0.0059 * pow(s.temp / 14000.0, 4.0);
     }
     return s;
 }
