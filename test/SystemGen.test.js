@@ -105,9 +105,9 @@ test('massive stars get at most 3 planets', () => {
 test('only gas giants get rings', () => {
   for (let i = 0; i < 200; i++) {
     const sys = generateSystem(0.3 + i * 0.02, -i * 3, (i * 7 % 100) / 100);
-    for (const p of sys.planets) {
-      if (p.rings) assert.equal(p.kind, KIND.GAS);
-    }
+    sys.planets.forEach((p, j) => {
+      if (p.rings) assert.ok(p.kind === KIND.GAS && (j > 0 || p.au >= 2.7 * Math.sqrt(luminosity(sys.star.mass))));
+    });
   }
 });
 
@@ -163,12 +163,16 @@ test('stellar evolution: a red giant swallows inner planets, remnants keep the r
   assert.ok(giant.planets.length < young.planets.length);
   assert.equal(dwarf.star.phase, 'white dwarf');
   assert.equal(dwarf.star.class, 'WD');
-  // Same ladder regardless of age: survivors sit on the same orbits with the same kinds
+  // Same ladder regardless of age: survivors sit on the same orbits; only worlds with air change kind
   for (const p of giant.planets) {
     const twin = young.planets.find(q => q.au === p.au);
-    assert.ok(twin && twin.kind === p.kind);
+    assert.ok(twin && (twin.kind === p.kind || twin.kind === KIND.TERRAN || twin.kind === KIND.VENUSIAN));
   }
-  assert.deepEqual(dwarf.planets.map(p => [p.au, p.kind]), young.planets.map(p => [p.au, p.kind]));
+  assert.deepEqual(dwarf.planets.map(p => p.au), young.planets.map(p => p.au));
   assert.ok(dwarf.planets[0].teq < young.planets[0].teq / 3);
+  // Worlds with air freeze around a white dwarf and boil under a red giant
+  assert.ok(young.planets.some(p => p.kind === KIND.TERRAN || p.kind === KIND.VENUSIAN), 'fixture needs a world with air');
+  assert.ok(!dwarf.planets.some(p => p.kind === KIND.TERRAN || p.kind === KIND.VENUSIAN));
+  assert.ok(!giant.planets.some(p => (p.kind === KIND.TERRAN || p.kind === KIND.VENUSIAN) && p.teq > 400));
   assert.equal(evolveStar(10, 1e6).phase, 'neutron star');
 });

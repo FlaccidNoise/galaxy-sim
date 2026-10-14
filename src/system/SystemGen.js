@@ -165,7 +165,7 @@ export function generateSystem(stellarMass, birthTime, seed, ageMyr = -birthTime
       radius, kind, seed: rand(), p1: rand(), p2: rand(),
       rings: null, moons: [],
     };
-    if (kind === KIND.GAS && rand() < 0.35) {
+    if (kind === KIND.GAS && !(i === 0 && warmJupiter) && rand() < 0.35) {   // close-in rings don't survive
       planet.rings = { inner: radius * 1.4, outer: radius * (2.2 + rand()), seed: rand() };
     }
     const giant = kind === KIND.GAS || kind === KIND.ICE_GIANT;
@@ -196,6 +196,13 @@ export function generateSystem(stellarMass, birthTime, seed, ageMyr = -birthTime
     if (f < 1) { p.e *= 0.9 * f; q.e *= 0.9 * f; }
   }
   planets = planets.filter(p => p.a * (1 - p.e) > star.radius * 1.3);   // a swollen giant star engulfs its inner planets
+  if (star.phase !== 'main') {   // an evolved star boils or freezes the worlds that had air
+    for (const p of planets) {
+      if (p.kind !== KIND.TERRAN && p.kind !== KIND.VENUSIAN) continue;
+      if (p.teq > 400) p.kind = KIND.SCORCHED;
+      else if (p.teq < 180) p.kind = KIND.ICY;
+    }
+  }
 
   // Belt: 70% of systems, in the widest orbit gap (or beyond the planets)
   let belt = null;
