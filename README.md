@@ -8,6 +8,7 @@ frame loop.
 git clone https://github.com/FlaccidNoise/galaxy-sim.git
 cd galaxy-sim
 npm start        # serves on http://localhost:3000 (or: npx serve .)
+npm test         # unit tests for picking and system generation (Node 20+)
 ```
 
 Requires a WebGPU browser (Chrome 113+, Safari 26+). There are no dependencies
