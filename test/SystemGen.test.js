@@ -215,7 +215,7 @@ test('stellar evolution: a red giant swallows inner planets, remnants keep the r
   const grow = 1 / 0.55;
   assert.deepEqual(dwarf.planets.map(p => +(p.au / grow).toFixed(9)), lateGiant.planets.map(p => +p.au.toFixed(9)));
   assert.ok(dwarf.star.reachAU > 1);
-  assert.equal(dwarf.belt?.a, young.belt?.a);
+  assert.ok(Math.abs(dwarf.belt.a / grow - young.belt.a) < 1e-9);   // the belt widens with the planets
   assert.ok(dwarf.planets[0].teq < young.planets[0].teq / 3);
   // Worlds with air freeze around a white dwarf and boil under a red giant
   assert.ok(young.planets.some(p => p.kind === KIND.TERRAN || p.kind === KIND.VENUSIAN), 'fixture needs a world with air');
