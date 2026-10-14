@@ -77,7 +77,7 @@ function updateStarInfo() {
   el.querySelector('.sc-bar').setAttribute('aria-label', `Blackbody colour, class ${star.class}`);
   el.querySelectorAll('.sc-bar i, .sc-scale span').forEach((n, i) => n.classList.toggle('on', i % 7 === lit));
   const b = focusIdx ? bodyPositions(selection.system, 0)[focusIdx] : null;
-  const focused = b && `Focused: ${KIND_NAME[b.planet.kind]}${b.moon ? ' moon' : ''}, ${b.planet.a.toFixed(2)} AU.\n`;
+  const focused = b && `Focused: ${KIND_NAME[b.planet.kind]}${b.moon ? ' moon' : ''}, ${b.planet.au.toFixed(2)} AU.\n`;
   const inSys = renderer.systemFade > 0;
   scHintEls[0].textContent = focused ? focused + 'Esc to release.' : inSys ? 'Esc to leave.' : scHintText[0];
   scHintEls[1].textContent = focused ? focused + 'Tap sky to release.' : inSys ? 'Tap sky to leave.' : scHintText[1];

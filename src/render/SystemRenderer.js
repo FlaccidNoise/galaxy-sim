@@ -208,6 +208,7 @@ export class SystemRenderer {
     u[28] = camera.canvas?.width ?? this.width;
     u[29] = camera.canvas?.height ?? this.height;
     u[30] = Math.tan(camera.fovY / 2);
+    u[31] = this.system?.frost ?? 1;
     this.device.queue.writeBuffer(this.uniformBuffer, 0, u);
   }
 

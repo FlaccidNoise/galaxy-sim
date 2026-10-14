@@ -7,7 +7,7 @@ struct SysUniforms {
     camRight   : vec3f,  time       : f32,
     camUp      : vec3f,  fade       : f32,
     camPos     : vec3f,  starTemp   : f32,
-    resolution : vec2f,  tanHalfFov : f32,  _pad : f32,
+    resolution : vec2f,  tanHalfFov : f32,  frost : f32,   // frost line, rendered units
 }
 
 struct Body {
@@ -349,8 +349,8 @@ fn fs_body(in : BodyVSOut) -> BodyFSOut {
         }
     }
     let nb = n * frame;   // world → body frame
-    // Distance past the frost line (2.7·√L, with SystemGen's L and T from mass): colder giants turn bluer
-    let cold = smoothstep(2.5, 7.0, length(in.center) / (2.7 * pow(su.starTemp / 5778.0, 3.2407)));
+    // Distance past the frost line: colder giants turn bluer
+    let cold = smoothstep(2.5, 7.0, length(in.center) / su.frost);
     let surf = surfaceColor(in.kind, nb, in.look, su.time, cold);
     var albedo = surf.rgb;
     var ns = n;

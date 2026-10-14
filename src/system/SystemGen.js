@@ -1,6 +1,7 @@
 // Deterministic procedural solar-system generation. Pure module — no GPU, no
-// DOM. Distances in AU-ish units; body radii are visual (inflated so planets
-// read at orbit distances), not to scale.
+// DOM. Orbits are laid out in physical AU (planet.au) and classified there;
+// rendered distances (planet.a) are the same ladder scaled up so the innermost
+// orbit clears the inflated visual star. Body radii are visual, not to scale.
 
 export function mulberry32(seed) {
   let a = seed >>> 0;
@@ -82,24 +83,26 @@ export function generateSystem(stellarMass, birthTime, seed) {
   const count = Math.min(Math.floor(rand() * 9), maxPlanets);
 
   const planets = [];
-  let a = (0.3 + 0.2 * rand()) * sqrtL + star.radius * 3;
+  let au = (0.1 + 0.3 * rand()) * sqrtL;   // innermost orbit, physical AU
+  const scale = Math.max(1, star.radius * 3 / au);   // rendered units per AU
   for (let i = 0; i < count; i++) {
-    const rocky = a < frostLine;
+    const a = au * scale;
     let kind, radius;
-    if (rocky) {
+    if (au < frostLine) {
       radius = 0.02 + 0.05 * rand();
-      const hz = a >= 0.95 * sqrtL && a <= 1.4 * sqrtL;
+      const hz = au >= 0.95 * sqrtL && au <= 1.4 * sqrtL;
       kind = hz ? KIND.TERRAN
-           : a < 0.5 * sqrtL ? KIND.SCORCHED
-           : a < 0.95 * sqrtL ? KIND.VENUSIAN
+           : au < 0.5 * sqrtL ? KIND.SCORCHED
+           : au < 0.95 * sqrtL ? KIND.VENUSIAN
            : KIND.ICY;
     } else {
-      kind = rand() < 0.6 ? KIND.GAS : KIND.ICE_GIANT;
+      // Gas giants form just past the frost line; ice giants dominate further out
+      kind = rand() < Math.min(0.9, 0.1 + (au / frostLine - 1) / 4) ? KIND.ICE_GIANT : KIND.GAS;
       radius = kind === KIND.GAS ? 0.15 + 0.2 * rand() : 0.1 + 0.08 * rand();
     }
     radius = Math.min(radius, 0.12 * a);   // tight red-dwarf orbits: no engulfing the star or neighbours
     const planet = {
-      a, phase: rand() * 2 * Math.PI, rate: orbitRate(a),
+      a, au, phase: rand() * 2 * Math.PI, rate: orbitRate(a),
       radius, kind, seed: rand(), p1: rand(), p2: rand(),
       rings: null, moons: [],
     };
@@ -119,13 +122,13 @@ export function generateSystem(stellarMass, birthTime, seed) {
       ma *= 1.6 + 0.4 * rand();
     }
     planets.push(planet);
-    a *= 1.4 + 0.6 * rand();
+    au *= 1.4 + 0.6 * rand();
   }
 
   // Belt: 70% of systems, in the widest orbit gap (or beyond the planets)
   let belt = null;
   if (rand() < 0.7) {
-    let beltA = planets.length ? planets[planets.length - 1].a * 1.5 : 2 * sqrtL;
+    let beltA = planets.length ? planets[planets.length - 1].a * 1.5 : 2 * sqrtL * scale;
     let widest = 0;
     for (let i = 0; i + 1 < planets.length; i++) {
       const ratio = planets[i + 1].a / planets[i].a;
@@ -137,5 +140,5 @@ export function generateSystem(stellarMass, birthTime, seed) {
     belt = { a: beltA, width: beltA * 0.15, count: 3000, seed: Math.floor(rand() * 0xffffffff) };
   }
 
-  return { star, planets, belt };
+  return { star, planets, belt, frost: frostLine * scale };   // frost: rendered units
 }

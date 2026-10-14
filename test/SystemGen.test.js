@@ -24,10 +24,24 @@ test('planet kinds respect the frost line', () => {
     const sys = generateSystem(0.5 + i * 0.01, -i * 13, i / 200);
     const frost = 2.7 * Math.sqrt(sys.star.lum);
     for (const p of sys.planets) {
-      if (p.kind === KIND.GAS || p.kind === KIND.ICE_GIANT) assert.ok(p.a >= frost);
-      else assert.ok(p.a < frost);
+      if (p.kind === KIND.GAS || p.kind === KIND.ICE_GIANT) assert.ok(p.au >= frost);
+      else assert.ok(p.au < frost);
     }
   }
+});
+
+test('rendered orbits are the physical ladder under one scale, and red dwarfs get rocky planets', () => {
+  let rocky = 0, systems = 0;
+  for (let i = 0; i < 300; i++) {
+    const sys = generateSystem(0.1 + i * 0.001, -i * 5, (i * 11 % 100) / 100);
+    const scale = sys.planets[0]?.a / sys.planets[0]?.au;
+    for (const p of sys.planets) assert.ok(Math.abs(p.a / p.au - scale) < 1e-9);
+    if (sys.planets.length) {
+      systems++;
+      if (sys.planets.some(p => p.kind <= KIND.ICY)) rocky++;
+    }
+  }
+  assert.ok(rocky / systems > 0.8, `only ${rocky}/${systems} red-dwarf systems have a rocky planet`);
 });
 
 test('orbits strictly increase; moons stay outside the planet; ≤4 moons', () => {
