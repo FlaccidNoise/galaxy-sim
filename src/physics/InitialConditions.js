@@ -36,9 +36,16 @@ export function kroupaIMF(mMax = 100) {
   return Math.pow(a - v * (a - b), -1 / 1.3);
 }
 
-/** Main-sequence lifetime in Myr: ~10 Gyr · (M/M☉)^-2.5 */
+/**
+ * Main-sequence (core-H burning) lifetime in Myr, piecewise power laws fit to
+ * Ekström et al. 2012 (non-rotating, Z = 0.014). Mirrored in render.wgsl.
+ */
 export function mainSequenceLifetimeMyr(m) {
-  return 10000 * Math.pow(m, -2.5);
+  if (m < 1.25) return 8540 * Math.pow(m, -3.6);
+  if (m < 3) return 7798 * Math.pow(m, -2.926);
+  if (m < 7) return 4375 * Math.pow(m, -2.405);
+  if (m < 15) return 1274 * Math.pow(m, -1.765);
+  return 89.9 * Math.pow(m, -0.808);
 }
 
 /**

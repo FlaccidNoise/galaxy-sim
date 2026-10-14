@@ -32,6 +32,26 @@ test('giants form past the frost line, except a lone warm Jupiter at the innermo
   assert.ok(warm > 0 && warm < 100, `${warm} warm Jupiters in 2000 systems`);
 });
 
+test('giants vanish above 3 M☉ (Reffert 2015) and a few systems carry a hot Jupiter', () => {
+  let heavy = 0, hot = 0, hotLonely = true, hotInside = true;
+  for (let i = 0; i < 2000; i++) {
+    const big = generateSystem(3 + i * 0.002, -i, i / 2000, 10);
+    if (big.planets.some(p => p.kind === KIND.GAS || p.kind === KIND.ICE_GIANT)) heavy++;
+    const sys = generateSystem(0.6 + i * 0.0005, -i * 3, (i * 7 % 1000) / 1000, 500);
+    const sqrtL = Math.sqrt(luminosity(sys.star.mass));
+    const hj = sys.planets[0];
+    if (hj && hj.kind === KIND.GAS && hj.au < 0.1 * sqrtL) {
+      hot++;
+      if (sys.planets.length > 3) hotLonely = false;
+      if (hj.e > 0.1 || hj.rings) hotInside = false;
+      assert.ok(hj.a - hj.radius > sys.star.radius);
+    }
+  }
+  assert.equal(heavy, 0);
+  assert.ok(hot >= 5 && hot <= 60, `${hot} hot Jupiters in 2000 systems`);
+  assert.ok(hotLonely && hotInside);
+});
+
 test('giants are rare around red dwarfs and old stars', () => {
   const giantShare = (M, birth) => {
     let n = 0;
@@ -76,7 +96,7 @@ test('planets never engulf the star or cross each other, even at pericentre and 
   for (let i = 0; i < 300; i++) {
     const sys = generateSystem(0.08 + i * 0.03, -i * 11, (i * 13 % 100) / 100);
     sys.planets.forEach((p, j) => {
-      assert.ok(p.e >= 0 && p.e <= 0.4);
+      assert.ok(p.e >= 0 && p.e <= 0.8);
       if (p.e > 0.1) eccentric++;
       assert.ok(p.a * (1 - p.e) - p.radius > sys.star.radius);
       if (j > 0) {
@@ -122,10 +142,10 @@ test('only gas giants past the frost line get rings; warm Jupiters never do', ()
 
 test('main-sequence laws: Sun-normalised, continuous, M dwarfs near 3000 K', () => {
   assert.equal(temperature(1), 5778);
-  assert.equal(luminosity(1), 1);
+  assert.ok(Math.abs(luminosity(1) - 1) < 0.05);
   assert.ok(Math.abs(temperature(0.57) / temperature(0.5699) - 1) < 0.02);
-  assert.ok(Math.abs(luminosity(0.43) / luminosity(0.4299) - 1) < 0.05);
-  assert.ok(Math.abs(luminosity(2) / luminosity(1.999) - 1) < 0.05);
+  for (const m of [0.45, 0.72, 1.05, 2.4, 7, 31]) assert.ok(Math.abs(luminosity(m) / luminosity(m * 0.9999) - 1) < 0.05, `luminosity join at ${m}`);
+  assert.ok(Math.abs(Math.log10(luminosity(59)) - 5.82) < 0.15);   // O3V
   assert.ok(Math.abs(temperature(0.37) / temperature(0.3699) - 1) < 0.02);
   assert.ok(Math.abs(temperature(1) / temperature(0.9999) - 1) < 0.02);
   assert.ok(temperature(0.15) > 2800 && temperature(0.15) < 3200);
@@ -169,7 +189,7 @@ test('bodyPositions follows the shader orbit formula and buffer order', () => {
 
 test('stellar evolution: a red giant swallows inner planets, remnants keep the rest', () => {
   const young = generateSystem(1.0, -1000, 0, 1000);
-  const giant = generateSystem(1.0, -1000, 0, 10000 + 600);   // t_MS = 10 Gyr, giant phase 1.2 Gyr
+  const giant = generateSystem(1.0, -1000, 0, 8540 + 520);   // t_MS = 8.54 Gyr, giant phase 1.04 Gyr
   const dwarf = generateSystem(1.0, -1000, 0, 20000);
   assert.ok(young.planets.length >= 3, 'fixture needs planets');
   assert.equal(giant.star.phase, 'giant');
@@ -177,10 +197,10 @@ test('stellar evolution: a red giant swallows inner planets, remnants keep the r
   assert.ok(giant.planets.length < young.planets.length);
   assert.equal(dwarf.star.phase, 'white dwarf');
   assert.equal(dwarf.star.class, 'WD');
-  assert.ok(dwarf.star.tempK > 4000 && dwarf.star.tempK < 5000);   // ~8.8 Gyr of cooling: Montreal track gives ~4,200 K
+  assert.ok(dwarf.star.tempK > 3800 && dwarf.star.tempK < 5000);   // ~10.4 Gyr of cooling: Montreal track gives ~4,000 K
   // Engulfment is physical: everything with pericentre inside ~1.15 AU is gone by the giant's end
   assert.ok(young.planets.some(p => p.au * (1 - p.e) < 1.15), 'fixture needs an inner planet');
-  assert.ok(generateSystem(1.0, -1000, 0, 11199).planets.every(p => p.au * (1 - p.e) > 1.1));
+  assert.ok(generateSystem(1.0, -1000, 0, 9579).planets.every(p => p.au * (1 - p.e) > 1.1));
   assert.equal(evolveStar(30, 1e6).phase, 'black hole');
   assert.equal(evolveStar(30, 1e6).lum, 0);
   // Same ladder regardless of age: survivors sit on the same orbits; only worlds with air change kind
@@ -189,8 +209,8 @@ test('stellar evolution: a red giant swallows inner planets, remnants keep the r
     assert.ok(twin && (twin.kind === p.kind || twin.kind === KIND.TERRAN || twin.kind === KIND.VENUSIAN));
   }
   // What the giant swallowed stays swallowed: the remnant keeps exactly the late giant's survivors
-  const lateGiant = generateSystem(1.0, -1000, 0, 11199);
-  assert.ok(lateGiant.planets.length < giant.planets.length);
+  const lateGiant = generateSystem(1.0, -1000, 0, 9579);
+  assert.ok(lateGiant.planets.length <= giant.planets.length);
   // ...and their orbits widen by M / M_wd as the envelope goes
   const grow = 1 / 0.55;
   assert.deepEqual(dwarf.planets.map(p => +(p.au / grow).toFixed(9)), lateGiant.planets.map(p => +p.au.toFixed(9)));

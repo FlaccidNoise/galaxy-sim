@@ -71,11 +71,26 @@ struct StarState {
     lum  : f32,
 }
 
-// Main-sequence luminosity and temperature by mass — mirrors SystemGen.js
+// Main-sequence luminosity, temperature and lifetime by mass — mirror SystemGen.js
+// and InitialConditions.js
 fn luminosity(M : f32) -> f32 {
-    if (M < 0.43) { return 0.23 * pow(M, 2.3); }
-    if (M < 2.0) { return pow(M, 4.0); }
-    return 1.4 * pow(M, 3.5);
+    let x = log(M) / 2.302585;
+    var y = 5.372 + 1.6 * (x - 1.491);
+    if (M < 0.45) { y = 2.028 * x - 1.049; }
+    else if (M < 0.72) { y = 4.572 * x - 0.167; }
+    else if (M < 1.05) { y = 5.743 * x; }
+    else if (M < 2.4) { y = 4.329 * x + 0.030; }
+    else if (M < 7.0) { y = 3.967 * x + 0.168; }
+    else if (M < 31.0) { y = 2.865 * x + 1.099; }
+    return pow(10.0, y);
+}
+
+fn mainSequenceMyr(M : f32) -> f32 {
+    if (M < 1.25) { return 8540.0 * pow(M, -3.6); }
+    if (M < 3.0) { return 7798.0 * pow(M, -2.926); }
+    if (M < 7.0) { return 4375.0 * pow(M, -2.405); }
+    if (M < 15.0) { return 1274.0 * pow(M, -1.765); }
+    return 89.9 * pow(M, -0.808);
 }
 
 fn temperature(M : f32) -> f32 {
@@ -86,7 +101,7 @@ fn temperature(M : f32) -> f32 {
 }
 
 fn starState(M : f32, ageIn : f32, seed : f32) -> StarState {
-    let tMS = 10000.0 * pow(M, -2.5);
+    let tMS = mainSequenceMyr(M);
     let tGiant = tMS * 0.12 + 15.0;
     let tempMS = temperature(M);
     let snDur = 15.0;   // Myr — stretched so a flash lasts ~1 s of real time

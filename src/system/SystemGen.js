@@ -1,3 +1,5 @@
+import { mainSequenceLifetimeMyr } from '../physics/InitialConditions.js';
+
 // Deterministic procedural solar-system generation. Pure module — no GPU, no
 // DOM. Orbits are laid out in physical AU (planet.au) and classified there;
 // rendered distances (planet.a) are the same ladder scaled up so the innermost
@@ -69,12 +71,20 @@ export function spectralClass(tempK) {
   return 'M';
 }
 
-// Main-sequence mass–luminosity and mass–temperature relations, piecewise fits
-// to Pecaut & Mamajek's dwarf table. Both are mirrored in render.wgsl.
+// Main-sequence mass–luminosity: Eker et al. 2018's six log–log slopes with the
+// intercepts chained from L(1 M☉) = 1 so the pieces join, extended above 31 M☉
+// toward O3V. Mass–temperature is a fit to Pecaut & Mamajek's dwarf table.
+// Both are mirrored in render.wgsl.
 export function luminosity(M) {
-  if (M < 0.43) return 0.23 * Math.pow(M, 2.3);
-  if (M < 2) return Math.pow(M, 4);
-  return 1.4 * Math.pow(M, 3.5);
+  const x = Math.log10(M);
+  const y = M < 0.45 ? 2.028 * x - 1.049
+          : M < 0.72 ? 4.572 * x - 0.167
+          : M < 1.05 ? 5.743 * x
+          : M < 2.4 ? 4.329 * x + 0.030
+          : M < 7 ? 3.967 * x + 0.168
+          : M < 31 ? 2.865 * x + 1.099
+          : 5.372 + 1.6 * (x - 1.491);
+  return Math.pow(10, y);
 }
 
 export function temperature(M) {
@@ -93,8 +103,8 @@ export function temperature(M) {
  * Smith 2008), scaling as M^0.65 toward red supergiants.
  */
 export function evolveStar(M, ageMyr) {
-  const tMS = 10000 * Math.pow(M, -2.5);
-  const tGiant = tMS * 0.12 + 15;
+  const tMS = mainSequenceLifetimeMyr(M);
+  const tGiant = tMS * 0.12 + 15;   // the +15 Myr keeps a massive star's giant phase on screen for a second
   const tempMS = temperature(M);
   const lumMS = luminosity(M);
   const rMS = 0.35 * Math.pow(M, 0.8);
@@ -133,20 +143,28 @@ export function generateSystem(stellarMass, birthTime, seed, ageMyr = -birthTime
   // Hot massive stars: sparse scorched systems. Red dwarfs: tight and small
   // (orbit spacing scales with √L).
   const maxPlanets = M >= 8 ? 3 : 8;
-  const count = Math.min(Math.floor(rand() * 9), maxPlanets);
-  // Giant cores need a massive, metal-rich disc: odds per outer slot scale with
-  // stellar mass and halve for the oldest (metal-poor) stars. birthTime is Myr before t=0.
+  let count = Math.min(Math.floor(rand() * 9), maxPlanets);
+  // Giant cores need a massive, metal-rich disc: odds per outer slot rise with
+  // stellar mass to a peak near 1.9 M☉, vanish by 3 M☉ (Reffert et al. 2015), and
+  // halve for the oldest (metal-poor) stars. birthTime is Myr before t=0.
   const ageGyr = Math.min(Math.max(-birthTime / 1000, 0), 12);
-  const pGiant = Math.min(1, 0.5 * M) * (1 - ageGyr / 24);
-  const warmJupiter = M > 0.5 && rand() < 0.02;   // migrated giant at the innermost slot
+  const pMass = M <= 1.9 ? Math.min(1, 0.5 * M) : Math.max(0, 0.95 * (3 - M) / 1.1);
+  const pGiant = pMass * (1 - ageGyr / 24);
+  // Migrated giants: 1% hot Jupiters at 0.02–0.08·√L (lonely: at most 3 planets),
+  // 3% warm Jupiters at the innermost regular slot (Wright et al. 2012).
+  const hotJupiter = M > 0.5 && pMass > 0 && rand() < 0.01;
+  const warmJupiter = !hotJupiter && M > 0.5 && pMass > 0 && rand() < 0.03;
+  const auHot = (0.02 + 0.06 * rand()) * sqrtL;
+  if (hotJupiter) count = Math.min(count, 2);
 
   let planets = [];
-  let au = (0.1 + 0.3 * rand()) * sqrtL;   // innermost orbit, physical AU
-  const scale = Math.max(1, rMS * 3 / au);   // rendered units per AU
-  for (let i = 0; i < count; i++) {
+  let au = (hotJupiter ? 0.3 + 0.3 * rand() : 0.1 + 0.3 * rand()) * sqrtL;   // innermost regular orbit, physical AU
+  const scale = Math.max(1, rMS * 3 / (hotJupiter ? auHot : au));   // rendered units per AU
+  for (let i = hotJupiter ? -1 : 0; i < count; i++) {
+    if (i < 0) au = auHot;
     const a = au * scale;
     let kind, radius;
-    if (i === 0 && warmJupiter) {
+    if (i < 0 || (i === 0 && warmJupiter)) {
       kind = KIND.GAS;
       radius = 0.15 + 0.2 * rand();
     } else if (au < frostLine && rand() < 0.35) {
@@ -161,8 +179,9 @@ export function generateSystem(stellarMass, birthTime, seed, ageMyr = -birthTime
            : au < 0.95 * sqrtL ? (small ? KIND.SCORCHED : KIND.VENUSIAN)
            : KIND.ICY;
     } else if (rand() < pGiant) {
-      // Gas giants form just past the frost line; ice giants dominate further out
-      kind = rand() < Math.min(0.9, 0.1 + (au / frostLine - 1) / 4) ? KIND.ICE_GIANT : KIND.GAS;
+      // Cold Neptunes outnumber Jupiters beyond the snow line (Suzuki et al. 2016),
+      // and more so further out
+      kind = rand() < Math.min(0.9, 0.6 + (au / frostLine - 1) / 4) ? KIND.ICE_GIANT : KIND.GAS;
       radius = kind === KIND.GAS ? 0.15 + 0.2 * rand() : 0.1 + 0.08 * rand();
     } else {
       kind = KIND.ICY;   // failed core: an ice dwarf
@@ -176,7 +195,7 @@ export function generateSystem(stellarMass, birthTime, seed, ageMyr = -birthTime
       radius, kind, seed: rand(), p1: rand(), p2: rand(),
       rings: null, moons: [],
     };
-    if (kind === KIND.GAS && !(i === 0 && warmJupiter) && rand() < 0.35) {   // close-in rings don't survive
+    if (kind === KIND.GAS && i > 0 && rand() < 0.35) {   // close-in rings don't survive
       planet.rings = { inner: radius * 1.4, outer: radius * (2.2 + rand()), seed: rand() };
     }
     const giant = kind === KIND.GAS || kind === KIND.ICE_GIANT;
@@ -192,14 +211,18 @@ export function generateSystem(stellarMass, birthTime, seed, ageMyr = -birthTime
       ma *= 1.6 + 0.4 * rand();
     }
     planets.push(planet);
-    au *= 1.4 + 0.6 * rand();
+    if (i < 0) au = (0.3 + 0.3 * rand()) * sqrtL;   // the regular ladder starts well outside the hot Jupiter
+    else au *= 1.4 + 0.6 * rand();
   }
 
-  // Eccentricity: Rayleigh, small in packed systems and larger for isolated
-  // planets, then shrunk so neighbouring orbits never cross.
+  // Eccentricity: Rayleigh. Kepler multis σ≈0.05 (Van Eylen & Albrecht 2015),
+  // isolated small planets ~0.12, giants ~0.2 (RV mean e≈0.22, Kipping 2013),
+  // hot Jupiters tidally circular. Then shrunk so neighbouring orbits never cross.
   planets.forEach((p, i) => {
     const packed = (i > 0 && p.au < 1.7 * planets[i - 1].au) || (i + 1 < planets.length && planets[i + 1].au < 1.7 * p.au);
-    p.e = Math.min((packed ? 0.04 : 0.12) * Math.sqrt(-2 * Math.log(1 - p.e)), 0.4);
+    const giant = p.kind === KIND.GAS || p.kind === KIND.ICE_GIANT;
+    const sigma = p.au < 0.1 * sqrtL ? 0.02 : giant ? 0.2 : packed ? 0.05 : 0.12;
+    p.e = Math.min(sigma * Math.sqrt(-2 * Math.log(1 - p.e)), 0.8);
   });
   for (let i = 0; i + 1 < planets.length; i++) {
     const p = planets[i], q = planets[i + 1];
