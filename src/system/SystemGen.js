@@ -135,9 +135,10 @@ export function generateSystem(stellarMass, birthTime, seed, ageMyr = -birthTime
     } else if (au < frostLine) {
       radius = 0.02 + 0.05 * rand();
       const hz = au >= 0.95 * sqrtL && au <= 1.4 * sqrtL;
-      kind = hz ? KIND.TERRAN
+      const small = radius < 0.035;   // Mars-sized: too little gravity to keep an atmosphere
+      kind = hz ? (small ? KIND.ROCKY : KIND.TERRAN)
            : au < 0.5 * sqrtL ? KIND.SCORCHED
-           : au < 0.95 * sqrtL ? KIND.VENUSIAN
+           : au < 0.95 * sqrtL ? (small ? KIND.SCORCHED : KIND.VENUSIAN)
            : KIND.ICY;
     } else if (rand() < pGiant) {
       // Gas giants form just past the frost line; ice giants dominate further out
