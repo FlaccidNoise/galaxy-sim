@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mulberry32, generateSystem, evolveStar, luminosity, spectralClass, KIND, bodyPositions } from '../src/system/SystemGen.js';
+import { mulberry32, generateSystem, evolveStar, luminosity, temperature, spectralClass, KIND, bodyPositions } from '../src/system/SystemGen.js';
 
 test('mulberry32 is deterministic and in [0,1)', () => {
   const a = mulberry32(42), b = mulberry32(42);
@@ -94,6 +94,17 @@ test('only gas giants get rings', () => {
       if (p.rings) assert.equal(p.kind, KIND.GAS);
     }
   }
+});
+
+test('main-sequence laws: Sun-normalised, continuous, M dwarfs near 3000 K', () => {
+  assert.equal(temperature(1), 5778);
+  assert.equal(luminosity(1), 1);
+  assert.ok(Math.abs(temperature(0.57) / temperature(0.5699) - 1) < 0.02);
+  assert.ok(Math.abs(luminosity(0.43) / luminosity(0.4299) - 1) < 0.05);
+  assert.ok(Math.abs(luminosity(2) / luminosity(1.999) - 1) < 0.05);
+  assert.ok(temperature(0.15) > 2800 && temperature(0.15) < 3200);
+  assert.equal(spectralClass(temperature(0.15)), 'M');
+  assert.equal(spectralClass(temperature(3)), 'B');
 });
 
 test('spectral classes', () => {

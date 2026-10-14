@@ -71,10 +71,17 @@ struct StarState {
     lum  : f32,
 }
 
+// Main-sequence luminosity and temperature by mass — mirrors SystemGen.js
+fn luminosity(M : f32) -> f32 {
+    if (M < 0.43) { return 0.23 * pow(M, 2.3); }
+    if (M < 2.0) { return pow(M, 4.0); }
+    return 1.4 * pow(M, 3.5);
+}
+
 fn starState(M : f32, ageIn : f32, seed : f32) -> StarState {
     let tMS = 10000.0 * pow(M, -2.5);
     let tGiant = tMS * 0.12 + 15.0;
-    let tempMS = 5778.0 * pow(M, 0.54);
+    let tempMS = select(5778.0 * pow(M, 0.6), 4100.0 * pow(M / 0.57, 0.25), M < 0.57);
     let snDur = 15.0;   // Myr — stretched so a flash lasts ~1 s of real time
 
     // Lifecycle is linear: the star-formation compute pass returns massive
@@ -85,11 +92,11 @@ fn starState(M : f32, ageIn : f32, seed : f32) -> StarState {
     var s : StarState;
     if (ageMyr < tMS) {
         s.temp = tempMS;
-        s.lum = pow(M, 3.5);
+        s.lum = luminosity(M);
     } else if (ageMyr < tMS + tGiant) {
         let f = (ageMyr - tMS) / tGiant;
         s.temp = mix(tempMS, 3400.0, clamp(f * 2.5, 0.0, 1.0));
-        s.lum = pow(M, 3.5) * mix(1.0, 60.0, f * f);
+        s.lum = luminosity(M) * mix(1.0, 60.0, f * f);
     } else if (M >= 8.0) {
         let sn = ageMyr - tMS - tGiant;
         if (sn < snDur) {

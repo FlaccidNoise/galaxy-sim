@@ -59,7 +59,8 @@ export function spectralClass(tempK) {
   return 'M';
 }
 
-// Main-sequence mass–luminosity relation, piecewise (continuous at the joins)
+// Main-sequence mass–luminosity and mass–temperature relations, piecewise fits
+// to Pecaut & Mamajek's dwarf table. Both are mirrored in render.wgsl.
 export function luminosity(M) {
   if (M < 0.43) return 0.23 * Math.pow(M, 2.3);
   if (M < 2) return Math.pow(M, 4);
@@ -71,10 +72,14 @@ export function luminosity(M) {
  * Visual radius grows as √(R/R_ms) so a red giant swells past the inner
  * orbits without filling the view. lum feeds planet temperatures.
  */
+export function temperature(M) {
+  return M < 0.57 ? 4100 * Math.pow(M / 0.57, 0.25) : 5778 * Math.pow(M, 0.6);
+}
+
 export function evolveStar(M, ageMyr) {
   const tMS = 10000 * Math.pow(M, -2.5);
   const tGiant = tMS * 0.12 + 15;
-  const tempMS = 5778 * Math.pow(M, 0.54);   // matches starState() in render.wgsl
+  const tempMS = temperature(M);
   const lumMS = luminosity(M);
   const rMS = 0.35 * Math.pow(M, 0.8);
   if (ageMyr < tMS) return { phase: 'main', tempK: tempMS, lum: lumMS, radius: rMS, class: spectralClass(tempMS) };
