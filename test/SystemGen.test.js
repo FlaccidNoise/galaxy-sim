@@ -94,6 +94,11 @@ test('orbitPos: circular case, pericentre at the pericentre direction, apocentre
   assert.ok(Math.abs(peri[0]) < 1e-12 && Math.abs(peri[1] - 2 * 0.7) < 1e-12);
   const apo = orbitPos(2, Math.PI, 1, 0.3, Math.PI / 2, 0);
   assert.ok(Math.abs(apo[0]) < 1e-12 && Math.abs(apo[1] + 2 * 1.3) < 1e-12);
+  // Off the axes the Newton steps do the work: compare with a converged solve
+  const M = 1, e = 0.4;
+  let E = M; for (let i = 0; i < 50; i++) E -= (E - e * Math.sin(E) - M) / (1 - e * Math.cos(E));
+  const [x, y] = orbitPos(2, M, 0, e, 0, 0);
+  assert.ok(Math.abs(x - 2 * (Math.cos(E) - e)) < 1e-9 && Math.abs(y - 2 * Math.sqrt(1 - e * e) * Math.sin(E)) < 1e-9);
 });
 
 test('massive stars get at most 3 planets', () => {
@@ -102,13 +107,17 @@ test('massive stars get at most 3 planets', () => {
   }
 });
 
-test('only gas giants get rings', () => {
-  for (let i = 0; i < 200; i++) {
-    const sys = generateSystem(0.3 + i * 0.02, -i * 3, (i * 7 % 100) / 100);
-    sys.planets.forEach((p, j) => {
-      if (p.rings) assert.ok(p.kind === KIND.GAS && (j > 0 || p.au >= 2.7 * Math.sqrt(luminosity(sys.star.mass))));
-    });
+test('only gas giants past the frost line get rings; warm Jupiters never do', () => {
+  let warm = 0;
+  for (let i = 0; i < 3000; i++) {
+    const sys = generateSystem(0.6 + i * 0.0005, -i * 3, (i * 7 % 1000) / 1000, 500);
+    const frost = 2.7 * Math.sqrt(luminosity(sys.star.mass));
+    for (const p of sys.planets) {
+      if (p.kind === KIND.GAS && p.au < frost) { warm++; assert.equal(p.rings, null); }
+      if (p.rings) assert.ok(p.kind === KIND.GAS && p.au >= frost);
+    }
   }
+  assert.ok(warm > 10, `only ${warm} warm Jupiters sampled`);
 });
 
 test('main-sequence laws: Sun-normalised, continuous, M dwarfs near 3000 K', () => {
@@ -168,7 +177,12 @@ test('stellar evolution: a red giant swallows inner planets, remnants keep the r
     const twin = young.planets.find(q => q.au === p.au);
     assert.ok(twin && (twin.kind === p.kind || twin.kind === KIND.TERRAN || twin.kind === KIND.VENUSIAN));
   }
-  assert.deepEqual(dwarf.planets.map(p => p.au), young.planets.map(p => p.au));
+  // What the giant swallowed stays swallowed: the remnant keeps exactly the late giant's survivors
+  const lateGiant = generateSystem(1.0, -1000, 0, 11199);
+  assert.ok(lateGiant.planets.length < giant.planets.length);
+  assert.deepEqual(dwarf.planets.map(p => p.au), lateGiant.planets.map(p => p.au));
+  assert.ok(dwarf.star.reach > dwarf.star.radius * 10);
+  assert.equal(dwarf.belt?.a, young.belt?.a);
   assert.ok(dwarf.planets[0].teq < young.planets[0].teq / 3);
   // Worlds with air freeze around a white dwarf and boil under a red giant
   assert.ok(young.planets.some(p => p.kind === KIND.TERRAN || p.kind === KIND.VENUSIAN), 'fixture needs a world with air');

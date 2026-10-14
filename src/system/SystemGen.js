@@ -79,7 +79,8 @@ export function luminosity(M) {
 /**
  * Current state of a star aged ageMyr: mirrors starState() in render.wgsl.
  * Visual radius grows as √(R/R_ms) so a red giant swells past the inner
- * orbits without filling the view. lum feeds planet temperatures.
+ * orbits without filling the view. lum feeds planet temperatures. reach is
+ * the largest radius the star has had: what it swallowed stays swallowed.
  */
 export function temperature(M) {
   return M < 0.57 ? 4100 * Math.pow(M / 0.57, 0.25) : 5778 * Math.pow(M, 0.6);
@@ -91,17 +92,21 @@ export function evolveStar(M, ageMyr) {
   const tempMS = temperature(M);
   const lumMS = luminosity(M);
   const rMS = 0.35 * Math.pow(M, 0.8);
-  if (ageMyr < tMS) return { phase: 'main', tempK: tempMS, lum: lumMS, radius: rMS, class: spectralClass(tempMS) };
+  if (ageMyr < tMS) return { phase: 'main', tempK: tempMS, lum: lumMS, radius: rMS, reach: rMS, class: spectralClass(tempMS) };
+  const giantRadius = f => {   // L = R²T⁴, with L and T at giant-phase fraction f
+    const tempK = tempMS + (3400 - tempMS) * Math.min(f * 2.5, 1);
+    return rMS * Math.sqrt(Math.sqrt(1 + 59 * f * f) * Math.pow(tempMS / tempK, 2));
+  };
   if (ageMyr < tMS + tGiant) {
     const f = (ageMyr - tMS) / tGiant;
     const tempK = tempMS + (3400 - tempMS) * Math.min(f * 2.5, 1);
-    const lum = lumMS * (1 + 59 * f * f);
-    const growth = Math.sqrt(lum / lumMS) * Math.pow(tempMS / tempK, 2);   // L = R²T⁴
-    return { phase: 'giant', tempK, lum, radius: rMS * Math.sqrt(growth), class: spectralClass(tempK) };
+    const radius = giantRadius(f);
+    return { phase: 'giant', tempK, lum: lumMS * (1 + 59 * f * f), radius, reach: radius, class: spectralClass(tempK) };
   }
-  if (M >= 8) return { phase: 'neutron star', tempK: 40000, lum: 0.0005, radius: rMS * 0.08, class: 'NS' };
+  const reach = giantRadius(1);
+  if (M >= 8) return { phase: 'neutron star', tempK: 40000, lum: 0.0005, radius: rMS * 0.08, reach, class: 'NS' };
   const tempK = 14000 / (1 + (ageMyr - tMS - tGiant) * 2e-4);
-  return { phase: 'white dwarf', tempK, lum: 0.004, radius: rMS * 0.15, class: 'WD' };
+  return { phase: 'white dwarf', tempK, lum: 0.004, radius: rMS * 0.15, reach, class: 'WD' };
 }
 
 export function generateSystem(stellarMass, birthTime, seed, ageMyr = -birthTime) {
@@ -195,30 +200,30 @@ export function generateSystem(stellarMass, birthTime, seed, ageMyr = -birthTime
     const f = (q.a - p.a - p.radius - q.radius) / (p.a * p.e + q.a * q.e);
     if (f < 1) { p.e *= 0.9 * f; q.e *= 0.9 * f; }
   }
-  planets = planets.filter(p => p.a * (1 - p.e) > star.radius * 1.3);   // a swollen giant star engulfs its inner planets
+  // Belt: 70% of systems, in the widest orbit gap (or beyond the planets),
+  // placed on the formation ladder so it does not jump as the star ages
+  const last = planets[planets.length - 1];
+  let beltA = last ? last.a * (1 + last.e) * 1.5 : 2 * sqrtL * scale;
+  let widest = 0;
+  for (let i = 0; i + 1 < planets.length; i++) {
+    const apo = planets[i].a * (1 + planets[i].e), peri = planets[i + 1].a * (1 - planets[i + 1].e);
+    const ratio = peri / apo;
+    if (ratio > 1.8 && ratio > widest) {
+      widest = ratio;
+      beltA = Math.sqrt(apo * peri);
+    }
+  }
+  const hasBelt = rand() < 0.7, beltSeed = Math.floor(rand() * 0xffffffff);
+  const belt = hasBelt && beltA > star.reach * 1.5 ? { a: beltA, width: beltA * 0.15, count: 3000, seed: beltSeed } : null;
+
+  // A swollen giant star engulfs its inner planets, for good
+  planets = planets.filter(p => p.a * (1 - p.e) > star.reach * 1.3);
   if (star.phase !== 'main') {   // an evolved star boils or freezes the worlds that had air
     for (const p of planets) {
       if (p.kind !== KIND.TERRAN && p.kind !== KIND.VENUSIAN) continue;
       if (p.teq > 400) p.kind = KIND.SCORCHED;
       else if (p.teq < 180) p.kind = KIND.ICY;
     }
-  }
-
-  // Belt: 70% of systems, in the widest orbit gap (or beyond the planets)
-  let belt = null;
-  if (rand() < 0.7) {
-    const last = planets[planets.length - 1];
-    let beltA = last ? last.a * (1 + last.e) * 1.5 : 2 * sqrtL * scale;
-    let widest = 0;
-    for (let i = 0; i + 1 < planets.length; i++) {
-      const apo = planets[i].a * (1 + planets[i].e), peri = planets[i + 1].a * (1 - planets[i + 1].e);
-      const ratio = peri / apo;
-      if (ratio > 1.8 && ratio > widest) {
-        widest = ratio;
-        beltA = Math.sqrt(apo * peri);
-      }
-    }
-    if (beltA > star.radius * 1.5) belt = { a: beltA, width: beltA * 0.15, count: 3000, seed: Math.floor(rand() * 0xffffffff) };
   }
 
   return { star, planets, belt, frost: frostLine * scale };   // frost: rendered units
