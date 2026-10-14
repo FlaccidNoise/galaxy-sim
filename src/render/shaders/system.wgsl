@@ -14,11 +14,13 @@ struct Body {
     orbit  : vec4f,   // a, phase, rate, radius
     parent : vec4f,   // parentA, parentPhase, parentRate, kind (as f32)
     look   : vec4f,   // seed, p1, p2, ring index + 1 (0 = none)
+    ecc    : vec4f,   // e, pericentre direction, parent e, parent pericentre direction
 }
 
 struct Ring {
     orbit : vec4f,    // parentA, parentPhase, parentRate, seed
     size  : vec4f,    // inner, outer, planet radius, unused
+    ecc   : vec4f,    // parent e, parent pericentre direction, unused, unused
 }
 
 @group(0) @binding(0) var<uniform> su : SysUniforms;
@@ -26,22 +28,28 @@ struct Ring {
 @group(0) @binding(2) var<storage, read> rings : array<Ring>;
 // Belt particle = 2 vec4s: [a, phase, rate, size], [incl, node, bright, _]
 @group(0) @binding(3) var<storage, read> belt : array<vec4f>;
-@group(0) @binding(4) var<storage, read> orbitLines : array<vec4f>;  // a in .x
+@group(0) @binding(4) var<storage, read> orbitLines : array<vec4f>;  // a, e, pericentre direction
 
 const QUAD = array<vec2f, 6>(
     vec2f(-1.0, -1.0), vec2f(1.0, -1.0), vec2f(-1.0, 1.0),
     vec2f(-1.0,  1.0), vec2f(1.0, -1.0), vec2f(1.0, 1.0),
 );
 
-fn orbitPos(a : f32, phase : f32, rate : f32) -> vec3f {
-    let ang = phase + rate * su.time;
-    return vec3f(cos(ang) * a, sin(ang) * a, 0.0);
+// Kepler ellipse at mean anomaly phase + rate·t: three fixed Newton steps,
+// the same as orbitPos in SystemGen.js so CPU picking matches the draw.
+fn orbitPos(a : f32, phase : f32, rate : f32, e : f32, w : f32) -> vec3f {
+    let M = phase + rate * su.time;
+    var E = M + e * sin(M);
+    for (var i = 0; i < 3; i++) { E -= (E - e * sin(E) - M) / (1.0 - e * cos(E)); }
+    let x = a * (cos(E) - e);
+    let y = a * sqrt(1.0 - e * e) * sin(E);
+    return vec3f(x * cos(w) - y * sin(w), x * sin(w) + y * cos(w), 0.0);
 }
 
 fn bodyCenter(b : Body) -> vec3f {
     // parent orbit (zeros for planets/sun) + own orbit
-    return orbitPos(b.parent.x, b.parent.y, b.parent.z)
-         + orbitPos(b.orbit.x, b.orbit.y, b.orbit.z);
+    return orbitPos(b.parent.x, b.parent.y, b.parent.z, b.ecc.z, b.ecc.w)
+         + orbitPos(b.orbit.x, b.orbit.y, b.orbit.z, b.ecc.x, b.ecc.y);
 }
 
 // Planckian blackbody fit — same as render.wgsl
@@ -425,7 +433,7 @@ struct RingVSOut {
 fn vs_ring(@builtin(vertex_index) vi : u32,
            @builtin(instance_index) ii : u32) -> RingVSOut {
     let rg = rings[ii];
-    let c = orbitPos(rg.orbit.x, rg.orbit.y, rg.orbit.z);
+    let c = orbitPos(rg.orbit.x, rg.orbit.y, rg.orbit.z, rg.ecc.x, rg.ecc.y);
     let local = QUAD[vi] * rg.size.y;
     let world = c + ringBasis(ringNormal(rg.orbit.w)) * vec3f(local, 0.0);
     var out : RingVSOut;
@@ -497,9 +505,11 @@ fn fs_belt(in : BeltVSOut) -> @location(0) vec4f {
 @vertex
 fn vs_orbitline(@builtin(vertex_index) vi : u32,
                 @builtin(instance_index) ii : u32) -> @builtin(position) vec4f {
-    let a = orbitLines[ii].x;
-    let ang = f32(vi) / 128.0 * 6.2831853;
-    return su.viewProj * vec4f(cos(ang) * a, sin(ang) * a, 0.0, 1.0);
+    let o = orbitLines[ii];   // a, e, pericentre direction
+    let E = f32(vi) / 128.0 * 6.2831853;
+    let x = o.x * (cos(E) - o.y);
+    let y = o.x * sqrt(1.0 - o.y * o.y) * sin(E);
+    return su.viewProj * vec4f(x * cos(o.z) - y * sin(o.z), x * sin(o.z) + y * cos(o.z), 0.0, 1.0);
 }
 
 @fragment

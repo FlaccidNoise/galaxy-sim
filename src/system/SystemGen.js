@@ -28,21 +28,30 @@ export function orbitRate(a) {
 }
 
 /**
+ * Position on a Kepler ellipse (semi-major axis a, eccentricity e, pericentre
+ * direction w) at mean anomaly phase + rate·t. Three fixed Newton steps, the
+ * same as orbitPos in system.wgsl, so CPU picking lands where the GPU draws.
+ */
+export function orbitPos(a, phase, rate, e, w, t) {
+  const M = phase + rate * t;
+  let E = M + e * Math.sin(M);
+  for (let i = 0; i < 3; i++) E -= (E - e * Math.sin(E) - M) / (1 - e * Math.cos(E));
+  const x = a * (Math.cos(E) - e), y = a * Math.sqrt(1 - e * e) * Math.sin(E);
+  return [x * Math.cos(w) - y * Math.sin(w), x * Math.sin(w) + y * Math.cos(w), 0];
+}
+
+/**
  * Body centres at system time t, in SystemRenderer's buffer order: the star,
- * then each planet followed by its moons. Mirrors orbitPos/bodyCenter in
- * system.wgsl. planet is null for the star; moons carry their parent planet.
+ * then each planet followed by its moons. Mirrors bodyCenter in system.wgsl.
+ * planet is null for the star; moons carry their parent planet.
  */
 export function bodyPositions(system, t) {
-  const orbit = (a, phase, rate) => {
-    const ang = phase + rate * t;
-    return [Math.cos(ang) * a, Math.sin(ang) * a, 0];
-  };
   const out = [{ pos: [0, 0, 0], radius: system.star.radius, planet: null, moon: false }];
   for (const p of system.planets) {
-    const c = orbit(p.a, p.phase, p.rate);
+    const c = orbitPos(p.a, p.phase, p.rate, p.e, p.w, t);
     out.push({ pos: c, radius: p.radius, planet: p, moon: false });
     for (const m of p.moons) {
-      const o = orbit(m.a, m.phase, m.rate);
+      const o = orbitPos(m.a, m.phase, m.rate, 0, 0, t);
       out.push({ pos: [c[0] + o[0], c[1] + o[1], 0], radius: m.radius, planet: p, moon: true });
     }
   }
@@ -120,7 +129,7 @@ export function generateSystem(stellarMass, birthTime, seed, ageMyr = -birthTime
   const pGiant = Math.min(1, 0.5 * M) * (1 - ageGyr / 24);
   const warmJupiter = M > 0.5 && rand() < 0.02;   // migrated giant at the innermost slot
 
-  const planets = [];
+  let planets = [];
   let au = (0.1 + 0.3 * rand()) * sqrtL;   // innermost orbit, physical AU
   const scale = Math.max(1, rMS * 3 / au);   // rendered units per AU
   for (let i = 0; i < count; i++) {
@@ -152,6 +161,7 @@ export function generateSystem(stellarMass, birthTime, seed, ageMyr = -birthTime
     const planet = {
       a, au, teq: 255 * Math.pow(star.lum, 0.25) / Math.sqrt(au),   // K today, Earth-like albedo
       phase: rand() * 2 * Math.PI, rate: orbitRate(a),
+      e: rand(), w: rand() * 2 * Math.PI,   // e is a uniform draw here; mapped once neighbours are known
       radius, kind, seed: rand(), p1: rand(), p2: rand(),
       rings: null, moons: [],
     };
@@ -170,20 +180,35 @@ export function generateSystem(stellarMass, birthTime, seed, ageMyr = -birthTime
       });
       ma *= 1.6 + 0.4 * rand();
     }
-    if (a > star.radius * 1.3) planets.push(planet);   // a swollen giant star engulfs its inner planets
+    planets.push(planet);
     au *= 1.4 + 0.6 * rand();
   }
+
+  // Eccentricity: Rayleigh, small in packed systems and larger for isolated
+  // planets, then shrunk so neighbouring orbits never cross.
+  planets.forEach((p, i) => {
+    const packed = (i > 0 && p.au < 1.7 * planets[i - 1].au) || (i + 1 < planets.length && planets[i + 1].au < 1.7 * p.au);
+    p.e = Math.min((packed ? 0.04 : 0.12) * Math.sqrt(-2 * Math.log(1 - p.e)), 0.4);
+  });
+  for (let i = 0; i + 1 < planets.length; i++) {
+    const p = planets[i], q = planets[i + 1];
+    const f = (q.a - p.a - p.radius - q.radius) / (p.a * p.e + q.a * q.e);
+    if (f < 1) { p.e *= 0.9 * f; q.e *= 0.9 * f; }
+  }
+  planets = planets.filter(p => p.a * (1 - p.e) > star.radius * 1.3);   // a swollen giant star engulfs its inner planets
 
   // Belt: 70% of systems, in the widest orbit gap (or beyond the planets)
   let belt = null;
   if (rand() < 0.7) {
-    let beltA = planets.length ? planets[planets.length - 1].a * 1.5 : 2 * sqrtL * scale;
+    const last = planets[planets.length - 1];
+    let beltA = last ? last.a * (1 + last.e) * 1.5 : 2 * sqrtL * scale;
     let widest = 0;
     for (let i = 0; i + 1 < planets.length; i++) {
-      const ratio = planets[i + 1].a / planets[i].a;
+      const apo = planets[i].a * (1 + planets[i].e), peri = planets[i + 1].a * (1 - planets[i + 1].e);
+      const ratio = peri / apo;
       if (ratio > 1.8 && ratio > widest) {
         widest = ratio;
-        beltA = Math.sqrt(planets[i].a * planets[i + 1].a);
+        beltA = Math.sqrt(apo * peri);
       }
     }
     if (beltA > star.radius * 1.5) belt = { a: beltA, width: beltA * 0.15, count: 3000, seed: Math.floor(rand() * 0xffffffff) };

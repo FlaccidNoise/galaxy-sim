@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mulberry32, generateSystem, evolveStar, luminosity, temperature, spectralClass, KIND, bodyPositions } from '../src/system/SystemGen.js';
+import { mulberry32, generateSystem, evolveStar, luminosity, temperature, spectralClass, KIND, bodyPositions, orbitPos } from '../src/system/SystemGen.js';
 
 test('mulberry32 is deterministic and in [0,1)', () => {
   const a = mulberry32(42), b = mulberry32(42);
@@ -71,14 +71,29 @@ test('orbits strictly increase; moons stay outside the planet; ≤4 moons', () =
   }
 });
 
-test('planets never engulf the star or each other', () => {
+test('planets never engulf the star or cross each other, even at pericentre and apocentre', () => {
+  let eccentric = 0;
   for (let i = 0; i < 300; i++) {
     const sys = generateSystem(0.08 + i * 0.03, -i * 11, (i * 13 % 100) / 100);
     sys.planets.forEach((p, j) => {
-      assert.ok(p.a - p.radius > sys.star.radius);
-      if (j > 0) assert.ok(p.a - p.radius > sys.planets[j - 1].a + sys.planets[j - 1].radius);
+      assert.ok(p.e >= 0 && p.e <= 0.4);
+      if (p.e > 0.1) eccentric++;
+      assert.ok(p.a * (1 - p.e) - p.radius > sys.star.radius);
+      if (j > 0) {
+        const q = sys.planets[j - 1];
+        assert.ok(p.a * (1 - p.e) - p.radius > q.a * (1 + q.e) + q.radius);
+      }
     });
   }
+  assert.ok(eccentric > 20, `only ${eccentric} planets with e > 0.1`);
+});
+
+test('orbitPos: circular case, pericentre at the pericentre direction, apocentre opposite', () => {
+  assert.deepEqual(orbitPos(2, 0.5, 0.1, 0, 0, 3), [Math.cos(0.8) * 2, Math.sin(0.8) * 2, 0]);
+  const peri = orbitPos(2, 0, 1, 0.3, Math.PI / 2, 0);   // mean anomaly 0
+  assert.ok(Math.abs(peri[0]) < 1e-12 && Math.abs(peri[1] - 2 * 0.7) < 1e-12);
+  const apo = orbitPos(2, Math.PI, 1, 0.3, Math.PI / 2, 0);
+  assert.ok(Math.abs(apo[0]) < 1e-12 && Math.abs(apo[1] + 2 * 1.3) < 1e-12);
 });
 
 test('massive stars get at most 3 planets', () => {
@@ -123,16 +138,14 @@ test('bodyPositions follows the shader orbit formula and buffer order', () => {
   assert.deepEqual(bodies[0].pos, [0, 0, 0]);
   assert.equal(bodies[0].radius, sys.star.radius);
 
-  // shader: orbitPos(a, phase, rate) = (cos(phase + rate·t)·a, sin(…)·a, 0)
-  const orbitPos = (a, phase, rate) => [Math.cos(phase + rate * t) * a, Math.sin(phase + rate * t) * a, 0];
   let i = 1;
   for (const p of sys.planets) {
-    const c = orbitPos(p.a, p.phase, p.rate);
+    const c = orbitPos(p.a, p.phase, p.rate, p.e, p.w, t);
     assert.deepEqual(bodies[i].pos, c);
     assert.equal(bodies[i].planet, p);
     assert.equal(bodies[i++].moon, false);
     for (const m of p.moons) {
-      const o = orbitPos(m.a, m.phase, m.rate);
+      const o = orbitPos(m.a, m.phase, m.rate, 0, 0, t);
       assert.deepEqual(bodies[i].pos, [c[0] + o[0], c[1] + o[1], 0]);
       assert.equal(bodies[i].radius, m.radius);
       assert.equal(bodies[i++].moon, true);

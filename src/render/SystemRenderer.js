@@ -120,16 +120,18 @@ export class SystemRenderer {
 
     // Bodies: sun first, then planets, then moons (parent orbit inlined so
     // the shader computes moon centers without indirection).
-    const bodies = [[0, 0, 0, system.star.radius, 0, 0, 0, KIND.SUN, 0.5, 0, 0, 0]];
+    // Rows: orbit (a, phase, rate, radius), parent orbit (a, phase, rate, kind),
+    // look (seed, p1, p2, ring index + 1), ecc (e, w, parent e, parent w)
+    const bodies = [[0, 0, 0, system.star.radius, 0, 0, 0, KIND.SUN, 0.5, 0, 0, 0, 0, 0, 0, 0]];
     const rings = [];
     const orbits = [];
     for (const p of system.planets) {
-      if (p.rings) rings.push([p.a, p.phase, p.rate, p.rings.seed, p.rings.inner, p.rings.outer, p.radius, 0]);
-      bodies.push([p.a, p.phase, p.rate, p.radius, 0, 0, 0, p.kind, p.seed, p.p1, p.p2, p.rings ? rings.length : 0]);
-      orbits.push([p.a, 0, 0, 0]);
+      if (p.rings) rings.push([p.a, p.phase, p.rate, p.rings.seed, p.rings.inner, p.rings.outer, p.radius, 0, p.e, p.w, 0, 0]);
+      bodies.push([p.a, p.phase, p.rate, p.radius, 0, 0, 0, p.kind, p.seed, p.p1, p.p2, p.rings ? rings.length : 0, p.e, p.w, 0, 0]);
+      orbits.push([p.a, p.e, p.w, 0]);
       p.moons.forEach((m, i) => {
         const kind = (p.seed * 7.31 + i * 0.618) % 1 < 0.5 ? KIND.ROCKY : KIND.ICY;
-        bodies.push([m.a, m.phase, m.rate, m.radius, p.a, p.phase, p.rate, kind, p.seed + 0.31 + i * 0.17, 0.5, 0.5, 0]);
+        bodies.push([m.a, m.phase, m.rate, m.radius, p.a, p.phase, p.rate, kind, p.seed + 0.31 + i * 0.17, 0.5, 0.5, 0, 0, 0, p.e, p.w]);
       });
     }
     this.numBodies = bodies.length;
@@ -147,8 +149,8 @@ export class SystemRenderer {
       dev.queue.writeBuffer(buf, 0, data);
       return buf;
     };
-    this.bodyBuffer = mk(bodies, 12);
-    this.ringBuffer = mk(rings, 8);
+    this.bodyBuffer = mk(bodies, 16);
+    this.ringBuffer = mk(rings, 12);
     this.orbitBuffer = mk(orbits, 4);
 
     // Belt particles, deterministic from the belt seed
