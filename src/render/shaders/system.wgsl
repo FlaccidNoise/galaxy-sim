@@ -195,7 +195,7 @@ fn surfaceColor(kind : u32, n : vec3f, look : vec4f, t : f32, cold : f32) -> vec
             }
             return vec4f(col, 0.0);
         }
-        case 6u: {   // ice giant: faint bands, polar haze, dark spot
+        case 6u, 8u: {   // ice giant and sub-Neptune: faint bands, polar haze, dark spot
             let warp = fbm(sp + vec3f(t * 0.003, 0.0, 0.0));
             let z = n.z + (warp - 0.5) * 0.1;
             let bands = fbm(vec3f(sp.xy * 0.3, z * 8.0));
@@ -228,6 +228,7 @@ fn atmoTint(kind : u32) -> vec4f {
         case 3u: { return vec4f(0.35, 0.60, 1.00, 1.0); }   // terran: Rayleigh blue
         case 5u: { return vec4f(0.80, 0.82, 0.85, 0.5); }   // gas giant: pale, neutral across palettes
         case 6u: { return vec4f(0.40, 0.85, 1.00, 0.8); }   // ice giant: cyan
+        case 8u: { return vec4f(0.70, 0.80, 0.90, 1.0); }   // sub-Neptune: thick grey-blue haze
         default: { return vec4f(0.0); }
     }
 }
@@ -374,7 +375,7 @@ fn fs_body(in : BodyVSOut) -> BodyFSOut {
         col = albedo * (light * cshadow + 0.015) + sunCol * spec * 3.0 * shade * cshadow;
         col = mix(col, vec3f(0.95) * (light + 0.015), cloud * 0.9);
     }
-    if (in.kind == 5u || in.kind == 6u) {
+    if (in.kind == 5u || in.kind == 6u || in.kind == 8u) {
         col *= 0.55 + 0.45 * sqrt(mu);   // limb darkening
     }
     if (tint.w > 0.0) {

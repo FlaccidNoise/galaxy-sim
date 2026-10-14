@@ -14,7 +14,7 @@ export function mulberry32(seed) {
 }
 
 // Appearance palette ids — must match the switch in system.wgsl
-export const KIND = { SUN: 0, SCORCHED: 1, VENUSIAN: 2, TERRAN: 3, ICY: 4, GAS: 5, ICE_GIANT: 6, ROCKY: 7 };
+export const KIND = { SUN: 0, SCORCHED: 1, VENUSIAN: 2, TERRAN: 3, ICY: 4, GAS: 5, ICE_GIANT: 6, ROCKY: 7, SUB_NEPTUNE: 8 };
 
 // Sim-time units; inner planets complete an orbit in ~10 s of real time
 const ORBIT_SPEED = 0.08;
@@ -103,6 +103,9 @@ export function generateSystem(stellarMass, birthTime, seed) {
     if (i === 0 && warmJupiter) {
       kind = KIND.GAS;
       radius = 0.15 + 0.2 * rand();
+    } else if (au < frostLine && rand() < 0.35) {
+      kind = KIND.SUB_NEPTUNE;   // the commonest planet class: a small core under a thick haze
+      radius = 0.07 + 0.03 * rand();
     } else if (au < frostLine) {
       radius = 0.02 + 0.05 * rand();
       const hz = au >= 0.95 * sqrtL && au <= 1.4 * sqrtL;

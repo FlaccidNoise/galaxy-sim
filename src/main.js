@@ -39,7 +39,7 @@ const FOCUS_BLEND = 0.4;   // seconds to move the system camera to a new focus
 // System zoom law: galaxy-camera radius → system eye distance (0.02 → 0.5 AU, 1.5 → ~120)
 const sysRadius = r => 0.5 * Math.pow(r / 0.02, 1.27);
 const camRadiusFor = rSys => 0.02 * Math.pow(rSys / 0.5, 1 / 1.27);
-const KIND_NAME = ['Star', 'Scorched world', 'Venusian world', 'Terran world', 'Icy world', 'Gas giant', 'Ice giant', 'Rocky world'];
+const KIND_NAME = ['Star', 'Scorched world', 'Venusian world', 'Terran world', 'Icy world', 'Gas giant', 'Ice giant', 'Rocky world', 'Sub-Neptune'];
 const scHintEls = [...document.querySelectorAll('#star-info .sc-hint span')];   // mouse, touch
 const scHintText = scHintEls.map(n => n.textContent);
 const hintEls = [...document.querySelectorAll('.hint span')];                   // mouse, touch
